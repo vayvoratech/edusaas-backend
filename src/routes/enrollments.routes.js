@@ -1,5 +1,5 @@
 const express = require("express");
-const { db, newId } = require("../data/dataStore");
+const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
 
 const router = express.Router();
@@ -24,31 +24,6 @@ const router = express.Router();
  *       201: { description: Enrollment created }
  *       404: { description: Course not found }
  *       409: { description: Already enrolled }
- */
-router.post("/", authRequired, (req, res) => {
-  const { course_id } = req.body || {};
-  if (!course_id) return res.status(400).json({ error: "course_id is required" });
-  const course = db.courses.find((c) => c.id === course_id);
-  if (!course) return res.status(404).json({ error: "course not found" });
-  const userId = req.user.sub;
-  const existing = db.enrollments.find((e) => e.user_id === userId && e.course_id === course_id);
-  if (existing) return res.status(409).json({ error: "already enrolled" });
-
-  const enrollment = {
-    id: newId(),
-    user_id: userId,
-    course_id,
-    status: "active",
-    completion_percentage: 0,
-    enrolled_at: new Date().toISOString(),
-  };
-  db.enrollments.push(enrollment);
-  res.status(201).json(enrollment);
-});
-
-/**
- * @openapi
- * /api/enrollments:
  *   get:
  *     tags: [Enrollments]
  *     summary: List current user's enrollments
@@ -56,8 +31,34 @@ router.post("/", authRequired, (req, res) => {
  *     responses:
  *       200: { description: Array of enrollments }
  */
-router.get("/", authRequired, (req, res) => {
-  res.json(db.enrollments.filter((e) => e.user_id === req.user.sub));
+router.post("/", authRequired, async (req, res, next) => {
+  try {
+    const { course_id } = req.body || {};
+    if (!course_id) return res.status(400).json({ error: "course_id is required" });
+    const course = await repo.courses.findById(course_id);
+    if (!course) return res.status(404).json({ error: "course not found" });
+    const userId = req.user.sub;
+    const existing = await repo.enrollments.findOne(userId, course_id);
+    if (existing) return res.status(409).json({ error: "already enrolled" });
+
+    const enrollment = await repo.enrollments.create({
+      user_id: userId,
+      course_id,
+      status: "active",
+      completion_percentage: 0,
+    });
+    res.status(201).json(enrollment);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/", authRequired, async (req, res, next) => {
+  try {
+    res.json(await repo.enrollments.listByUser(req.user.sub));
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

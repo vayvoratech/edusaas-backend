@@ -1,5 +1,5 @@
 const express = require("express");
-const { db } = require("../data/dataStore");
+const repo = require("../data");
 const { authRequired, roleRequired } = require("../middleware/auth");
 
 const router = express.Router();
@@ -15,16 +15,21 @@ const router = express.Router();
  *       200: { description: Array of users (no password_hash) }
  *       403: { description: Forbidden }
  */
-router.get("/users", authRequired, roleRequired("admin"), (req, res) => {
-  res.json(
-    db.users.map((u) => ({
-      id: u.id,
-      name: u.name,
-      email: u.email,
-      role: u.role,
-      created_at: u.created_at,
-    }))
-  );
+router.get("/users", authRequired, roleRequired("admin"), async (req, res, next) => {
+  try {
+    const users = await repo.users.list();
+    res.json(
+      users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        created_at: u.created_at,
+      }))
+    );
+  } catch (err) {
+    next(err);
+  }
 });
 
 /**
@@ -38,27 +43,12 @@ router.get("/users", authRequired, roleRequired("admin"), (req, res) => {
  *       200: { description: Insights object }
  *       403: { description: Forbidden }
  */
-router.get("/insights", authRequired, roleRequired("admin"), (req, res) => {
-  const totalAssessments = db.assessments.length;
-  const avgScore =
-    totalAssessments === 0
-      ? 0
-      : Math.round(db.assessments.reduce((s, a) => s + a.score, 0) / totalAssessments);
-
-  res.json({
-    totals: {
-      users: db.users.length,
-      courses: db.courses.length,
-      enrollments: db.enrollments.length,
-      jobs: db.jobs.length,
-      applications: db.applications.length,
-    },
-    assessments: {
-      count: totalAssessments,
-      average_score: avgScore,
-    },
-    top_missing_skills: ["communication", "advanced-react", "system-design"],
-  });
+router.get("/insights", authRequired, roleRequired("admin"), async (req, res, next) => {
+  try {
+    res.json(await repo.insights());
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

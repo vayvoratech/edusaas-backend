@@ -1,5 +1,5 @@
 const express = require("express");
-const { db, newId } = require("../data/dataStore");
+const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
 
 const router = express.Router();
@@ -33,34 +33,30 @@ const router = express.Router();
  *     responses:
  *       200: { description: Subscription or null }
  */
-router.post("/", authRequired, (req, res) => {
-  const { plan_type, months } = req.body || {};
-  if (!plan_type) return res.status(400).json({ error: "plan_type is required" });
-  const start = new Date();
-  const end = new Date(start);
-  end.setMonth(end.getMonth() + (months || 1));
-
-  let sub = db.subscriptions.find((s) => s.user_id === req.user.sub);
-  if (sub) {
-    sub.plan_type = plan_type;
-    sub.start_date = start.toISOString();
-    sub.end_date = end.toISOString();
-  } else {
-    sub = {
-      id: newId(),
-      user_id: req.user.sub,
+router.post("/", authRequired, async (req, res, next) => {
+  try {
+    const { plan_type, months } = req.body || {};
+    if (!plan_type) return res.status(400).json({ error: "plan_type is required" });
+    const start = new Date();
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + (months || 1));
+    const sub = await repo.subscriptions.upsert(req.user.sub, {
       plan_type,
-      start_date: start.toISOString(),
-      end_date: end.toISOString(),
-    };
-    db.subscriptions.push(sub);
+      start_date: start,
+      end_date: end,
+    });
+    res.json(sub);
+  } catch (err) {
+    next(err);
   }
-  res.json(sub);
 });
 
-router.get("/", authRequired, (req, res) => {
-  const sub = db.subscriptions.find((s) => s.user_id === req.user.sub) || null;
-  res.json(sub);
+router.get("/", authRequired, async (req, res, next) => {
+  try {
+    res.json(await repo.subscriptions.findByUserId(req.user.sub));
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

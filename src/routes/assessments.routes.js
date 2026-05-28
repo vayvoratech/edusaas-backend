@@ -1,5 +1,5 @@
 const express = require("express");
-const { db, newId } = require("../data/dataStore");
+const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
 
 const router = express.Router();
@@ -27,21 +27,22 @@ const router = express.Router();
  *     responses:
  *       201: { description: Assessment recorded }
  */
-router.post("/", authRequired, (req, res) => {
-  const { type, score, answers } = req.body || {};
-  if (!type || typeof score !== "number") {
-    return res.status(400).json({ error: "type (string) and score (number) are required" });
+router.post("/", authRequired, async (req, res, next) => {
+  try {
+    const { type, score, answers } = req.body || {};
+    if (!type || typeof score !== "number") {
+      return res.status(400).json({ error: "type (string) and score (number) are required" });
+    }
+    const assessment = await repo.assessments.create({
+      user_id: req.user.sub,
+      type,
+      score,
+      answers: answers || [],
+    });
+    res.status(201).json(assessment);
+  } catch (err) {
+    next(err);
   }
-  const assessment = {
-    id: newId(),
-    user_id: req.user.sub,
-    type,
-    score,
-    answers: answers || [],
-    date_taken: new Date().toISOString(),
-  };
-  db.assessments.push(assessment);
-  res.status(201).json(assessment);
 });
 
 /**
@@ -60,10 +61,14 @@ router.post("/", authRequired, (req, res) => {
  *       200: { description: Assessment with results }
  *       404: { description: Not found }
  */
-router.get("/:id/results", authRequired, (req, res) => {
-  const a = db.assessments.find((x) => x.id === req.params.id);
-  if (!a) return res.status(404).json({ error: "assessment not found" });
-  res.json(a);
+router.get("/:id/results", authRequired, async (req, res, next) => {
+  try {
+    const a = await repo.assessments.findById(req.params.id);
+    if (!a) return res.status(404).json({ error: "assessment not found" });
+    res.json(a);
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

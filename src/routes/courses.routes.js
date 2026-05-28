@@ -1,5 +1,5 @@
 const express = require("express");
-const { db, newId } = require("../data/dataStore");
+const repo = require("../data");
 const { authRequired, roleRequired } = require("../middleware/auth");
 
 const router = express.Router();
@@ -31,23 +31,28 @@ const router = express.Router();
  *     responses:
  *       201: { description: Course created }
  */
-router.get("/", (req, res) => {
-  res.json(db.courses);
+router.get("/", async (req, res, next) => {
+  try {
+    res.json(await repo.courses.list());
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.post("/", authRequired, roleRequired("educator", "admin"), (req, res) => {
-  const { title, description, provider, category } = req.body || {};
-  if (!title) return res.status(400).json({ error: "title is required" });
-  const course = {
-    id: newId(),
-    title,
-    description: description || "",
-    provider: provider || "EDU-SAAS",
-    category: category || "General",
-    created_at: new Date().toISOString(),
-  };
-  db.courses.push(course);
-  res.status(201).json(course);
+router.post("/", authRequired, roleRequired("educator", "admin"), async (req, res, next) => {
+  try {
+    const { title, description, provider, category } = req.body || {};
+    if (!title) return res.status(400).json({ error: "title is required" });
+    const course = await repo.courses.create({
+      title,
+      description: description || "",
+      provider: provider || "EDU-SAAS",
+      category: category || "General",
+    });
+    res.status(201).json(course);
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

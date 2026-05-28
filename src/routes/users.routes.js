@@ -1,5 +1,5 @@
 const express = require("express");
-const { db } = require("../data/dataStore");
+const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
 
 const router = express.Router();
@@ -20,17 +20,21 @@ const router = express.Router();
  *       200: { description: User profile }
  *       404: { description: User not found }
  */
-router.get("/:id", authRequired, (req, res) => {
-  const user = db.users.find((u) => u.id === req.params.id);
-  if (!user) return res.status(404).json({ error: "user not found" });
-  const profile = db.profiles.find((p) => p.user_id === user.id) || null;
-  res.json({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    profile,
-  });
+router.get("/:id", authRequired, async (req, res, next) => {
+  try {
+    const user = await repo.users.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: "user not found" });
+    const profile = await repo.profiles.findByUserId(user.id);
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      profile: profile || null,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;
