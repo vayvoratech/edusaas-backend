@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["education"]
+}
+
+model User {
+  id            String         @id @default(uuid())
+  name          String
+  email         String         @unique
+  role          String
+  password_hash String
+  created_at    DateTime       @default(now())
+
+  profile       Profile?
+  assessments   Assessment[]
+  gapReports    GapReport[]
+  enrollments   Enrollment[]
+  jobs          Job[]          @relation("EmployerJobs")
+  applications  Application[]
+  notifications Notification[]
+  subscriptions Subscription[]
+
+  @@map("users")
+  @@schema("education")
+}
+
+model Profile {
+  id           String  @id @default(uuid())
+  user_id      String  @unique
+  career_goal  String?
+  institution  String?
+  company      String?
+  preferences  Json?
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+  @@schema("education")
+}
+
+model Assessment {
+  id         String   @id @default(uuid())
+  user_id    String
+  type       String
+  score      Float
+  answers    Json?
+  date_taken DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("assessments")
+  @@schema("education")
+}
+
+model GapReport {
+  id               String   @id @default(uuid())
+  user_id          String
+  readiness_score  Float
+  missing_skills   String[]
+  recommendations  Json?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("gap_reports")
+  @@schema("education")
+}
+
+model Course {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  provider    String?
+  category    String?
+  created_at  DateTime @default(now())
+
+  enrollments Enrollment[]
+
+  @@map("courses")
+  @@schema("education")
+}
+
+model Enrollment {
+  id                    String   @id @default(uuid())
+  user_id               String
+  course_id             String
+  status                String   @default("active")
+  completion_percentage Float    @default(0)
+  enrolled_at           DateTime @default(now())
+
+  user   User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [course_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, course_id])
+  @@map("enrollments")
+  @@schema("education")
+}
+
+model Job {
+  id              String   @id @default(uuid())
+  employer_id     String
+  title           String
+  required_skills String[]
+  status          String   @default("open")
+  created_at      DateTime @default(now())
+
+  employer     User          @relation("EmployerJobs", fields: [employer_id], references: [id], onDelete: Cascade)
+  applications Application[]
+
+  @@map("jobs")
+  @@schema("education")
+}
+
+model Application {
+  id         String   @id @default(uuid())
+  job_id     String
+  student_id String
+  status     String   @default("submitted")
+  applied_at DateTime @default(now())
+
+  job     Job  @relation(fields: [job_id], references: [id], onDelete: Cascade)
+  student User @relation(fields: [student_id], references: [id], onDelete: Cascade)
+
+  @@unique([job_id, student_id])
+  @@map("applications")
+  @@schema("education")
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  user_id     String
+  type        String
+  message     String
+  read_status Boolean  @default(false)
+  created_at  DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+  @@schema("education")
+}
+
+model Subscription {
+  id         String   @id @default(uuid())
+  user_id    String
+  plan_type  String
+  start_date DateTime
+  end_date   DateTime
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+  @@schema("education")
+}
