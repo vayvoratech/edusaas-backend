@@ -31,6 +31,8 @@ const options = {
       { name: "Notifications" },
       { name: "Admin" },
       { name: "Subscriptions" },
+      { name: "Reports" },
+      { name: "Settings" },
     ],
   },
   apis: [path.join(__dirname, "..", "routes", "*.js")],

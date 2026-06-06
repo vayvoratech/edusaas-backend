@@ -84,6 +84,8 @@ router.post("/login", async (req, res, next) => {
     if (!user) return res.status(401).json({ error: "invalid credentials" });
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ error: "invalid credentials" });
+    if (user.status === "suspended") return res.status(403).json({ error: "account suspended" });
+    await repo.users.touchLogin(user.id);
     const token = jwt.sign({ sub: user.id, role: user.role }, jwtSecret, { expiresIn: jwtExpiresIn });
     res.json({
       token,

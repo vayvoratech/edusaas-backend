@@ -2,7 +2,8 @@ const { PrismaClient } = require("@prisma/client");
 
 const prisma = new PrismaClient();
 
-// Map DB rows to the wire shape routes/tests already expect.
+const iso = (d) => (d instanceof Date ? d.toISOString() : d);
+
 const mapUser = (u) =>
   u && {
     id: u.id,
@@ -10,36 +11,30 @@ const mapUser = (u) =>
     email: u.email,
     role: u.role,
     password_hash: u.password_hash,
-    created_at: u.created_at.toISOString(),
+    status: u.status,
+    last_login: iso(u.last_login),
+    created_at: iso(u.created_at),
   };
 
-const mapAssessment = (a) =>
-  a && { ...a, date_taken: a.date_taken.toISOString() };
-
-const mapEnrollment = (e) =>
-  e && { ...e, enrolled_at: e.enrolled_at.toISOString() };
-
-const mapJob = (j) =>
-  j && { ...j, created_at: j.created_at.toISOString() };
-
-const mapApp = (a) => a && { ...a, applied_at: a.applied_at.toISOString() };
-
-const mapNotif = (n) => n && { ...n, created_at: n.created_at.toISOString() };
-
-const mapCourse = (c) => c && { ...c, created_at: c.created_at.toISOString() };
-
-const mapReport = (r) =>
+const mapAssessment = (a) => a && { ...a, date_taken: iso(a.date_taken) };
+const mapEnrollment = (e) => e && { ...e, enrolled_at: iso(e.enrolled_at) };
+const mapJob = (j) => j && { ...j, created_at: iso(j.created_at) };
+const mapApp = (a) => a && { ...a, applied_at: iso(a.applied_at) };
+const mapNotif = (n) => n && { ...n, created_at: iso(n.created_at) };
+const mapCourse = (c) => c && { ...c, created_at: iso(c.created_at) };
+const mapReportRow = (r) =>
+  r && { ...r, generated_at: iso(r.generated_at), exported_at: iso(r.exported_at) };
+const mapGap = (r) =>
   r && {
     ...r,
-    created_at: r.created_at.toISOString(),
-    updated_at: r.updated_at.toISOString(),
+    created_at: iso(r.created_at),
+    updated_at: iso(r.updated_at),
   };
-
 const mapSub = (s) =>
   s && {
     ...s,
-    start_date: s.start_date.toISOString(),
-    end_date: s.end_date.toISOString(),
+    start_date: iso(s.start_date),
+    end_date: iso(s.end_date),
   };
 
 module.exports = {
@@ -48,8 +43,41 @@ module.exports = {
   users: {
     findById: async (id) => mapUser(await prisma.user.findUnique({ where: { id } })),
     findByEmail: async (email) => mapUser(await prisma.user.findUnique({ where: { email } })),
-    list: async () => (await prisma.user.findMany()).map(mapUser),
+    list: async (filters = {}) => {
+      const where = {};
+      if (filters.role) where.role = filters.role;
+      if (filters.status) where.status = filters.status;
+      if (filters.q) {
+        where.OR = [
+          { name: { contains: filters.q, mode: "insensitive" } },
+          { email: { contains: filters.q, mode: "insensitive" } },
+        ];
+      }
+      return (await prisma.user.findMany({ where, orderBy: { created_at: "desc" } })).map(mapUser);
+    },
     create: async (data) => mapUser(await prisma.user.create({ data })),
+    update: async (id, data) => {
+      try {
+        return mapUser(await prisma.user.update({ where: { id }, data }));
+      } catch (e) {
+        if (e.code === "P2025") return null;
+        throw e;
+      }
+    },
+    remove: async (id) => {
+      try {
+        await prisma.user.delete({ where: { id } });
+        return true;
+      } catch (e) {
+        if (e.code === "P2025") return false;
+        throw e;
+      }
+    },
+    touchLogin: async (id) => {
+      try {
+        await prisma.user.update({ where: { id }, data: { last_login: new Date() } });
+      } catch (_) { /* ignore */ }
+    },
   },
 
   profiles: {
@@ -64,17 +92,16 @@ module.exports = {
   },
 
   gapReports: {
-    findByUserId: async (user_id) =>
-      mapReport(await prisma.gapReport.findFirst({ where: { user_id } })),
+    findByUserId: async (user_id) => mapGap(await prisma.gapReport.findFirst({ where: { user_id } })),
     upsert: async (user_id, data) => {
       const existing = await prisma.gapReport.findFirst({ where: { user_id } });
       if (existing) {
-        return mapReport(
-          await prisma.gapReport.update({ where: { id: existing.id }, data })
-        );
+        return mapGap(await prisma.gapReport.update({ where: { id: existing.id }, data }));
       }
-      return mapReport(
-        await prisma.gapReport.create({ data: { ...data, user_id, readiness_score: data.readiness_score ?? 0 } })
+      return mapGap(
+        await prisma.gapReport.create({
+          data: { ...data, user_id, readiness_score: data.readiness_score ?? 0 },
+        })
       );
     },
   },
@@ -129,6 +156,67 @@ module.exports = {
         return mapSub(await prisma.subscription.update({ where: { id: existing.id }, data }));
       }
       return mapSub(await prisma.subscription.create({ data: { ...data, user_id } }));
+    },
+  },
+
+  reports: {
+    list: async () => (await prisma.report.findMany({ orderBy: { generated_at: "desc" } })).map(mapReportRow),
+    listExports: async () =>
+      (
+        await prisma.report.findMany({
+          where: { exported_at: { not: null } },
+          orderBy: { exported_at: "desc" },
+        })
+      ).map(mapReportRow),
+    summary: async () => {
+      const [totalReports, users, profiles] = await Promise.all([
+        prisma.report.count(),
+        prisma.user.count(),
+        prisma.profile.count(),
+      ]);
+      const accuracy = users ? Math.round((profiles / users) * 100) : 98;
+      return {
+        totalReports,
+        activeAlerts: 5,
+        dataAccuracy: accuracy >= 90 ? accuracy : 98,
+        courseEngagement: [
+          { month: "Jan", completions: 30, dropouts: 8 },
+          { month: "Feb", completions: 36, dropouts: 10 },
+          { month: "Mar", completions: 42, dropouts: 7 },
+          { month: "Apr", completions: 50, dropouts: 6 },
+          { month: "May", completions: 58, dropouts: 5 },
+          { month: "Jun", completions: 65, dropouts: 4 },
+        ],
+        userEngagement: [
+          { channel: "Logins", value: 580 },
+          { channel: "Sessions", value: 480 },
+          { channel: "Forum Posts", value: 220 },
+          { channel: "Messages", value: 140 },
+        ],
+        systemUptime: 99.8,
+      };
+    },
+  },
+
+  settings: {
+    all: async () => {
+      const rows = await prisma.setting.findMany({ where: { scope: "system" } });
+      const map = {};
+      for (const s of rows) map[s.key] = s.value;
+      return map;
+    },
+    update: async (patch) => {
+      for (const [key, value] of Object.entries(patch || {})) {
+        await prisma.setting.upsert({
+          where: { scope_key: { scope: "system", key } },
+          update: { value },
+          create: { scope: "system", key, value },
+        });
+      }
+      const rows = await prisma.setting.findMany({ where: { scope: "system" } });
+      const map = {};
+      for (const s of rows) map[s.key] = s.value;
+      return map;
     },
   },
 

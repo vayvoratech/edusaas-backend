@@ -14,6 +14,8 @@ model User {
   email         String         @unique
   role          String
   password_hash String
+  status        String         @default("active")
+  last_login    DateTime?
   created_at    DateTime       @default(now())
 
   profile       Profile?
@@ -156,5 +158,29 @@ model Subscription {
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("subscriptions")
+  @@schema("education")
+}
+
+model Report {
+  id          String   @id @default(uuid())
+  title       String
+  type        String   // enrollment | assessment | activity | satisfaction | custom
+  generated_at DateTime @default(now())
+  exported_at DateTime?
+  format      String?  // pdf | csv
+  payload     Json?
+
+  @@map("reports")
+  @@schema("education")
+}
+
+model Setting {
+  id     String @id @default(uuid())
+  scope  String @default("system")  // system | tenant | user
+  key    String
+  value  Json
+
+  @@unique([scope, key])
+  @@map("settings")
   @@schema("education")
 }

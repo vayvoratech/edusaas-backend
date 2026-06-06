@@ -15,6 +15,8 @@ const jobsRoutes = require("./src/routes/jobs.routes");
 const notificationsRoutes = require("./src/routes/notifications.routes");
 const adminRoutes = require("./src/routes/admin.routes");
 const subscriptionsRoutes = require("./src/routes/subscriptions.routes");
+const reportsRoutes = require("./src/routes/reports.routes");
+const settingsRoutes = require("./src/routes/settings.routes");
 
 const { notFound, errorHandler } = require("./src/middleware/errorHandler");
 
@@ -44,6 +46,8 @@ app.use("/api/jobs", jobsRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/subscriptions", subscriptionsRoutes);
+app.use("/api/reports", reportsRoutes);
+app.use("/api/settings", settingsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
