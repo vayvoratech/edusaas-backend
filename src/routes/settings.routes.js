@@ -1,6 +1,6 @@
 const express = require("express");
 const repo = require("../data");
-const { authRequired, roleRequired } = require("../middleware/auth");
+const { authRequired, permissionRequired } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -37,7 +37,7 @@ router.get("/", authRequired, async (req, res, next) => {
   }
 });
 
-router.patch("/", authRequired, roleRequired("admin"), async (req, res, next) => {
+router.patch("/", authRequired, permissionRequired("settings:update"), async (req, res, next) => {
   try {
     if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
       return res.status(400).json({ error: "expected an object of key/value updates" });

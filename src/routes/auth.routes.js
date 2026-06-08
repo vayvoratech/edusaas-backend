@@ -46,10 +46,17 @@ router.post("/register", async (req, res, next) => {
     }
     const password_hash = await bcrypt.hash(password, 10);
     const user = await repo.users.create({ name, email, role, password_hash });
-    const token = jwt.sign({ sub: user.id, role: user.role }, jwtSecret, { expiresIn: jwtExpiresIn });
+    const token = jwt.sign(
+      { sub: user.id, role: user.role, permissions: user.permissions || [] },
+      jwtSecret,
+      { expiresIn: jwtExpiresIn }
+    );
     res.status(201).json({
       token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user.id, name: user.name, email: user.email,
+        role: user.role, permissions: user.permissions || [],
+      },
     });
   } catch (err) {
     next(err);
@@ -86,10 +93,17 @@ router.post("/login", async (req, res, next) => {
     if (!ok) return res.status(401).json({ error: "invalid credentials" });
     if (user.status === "suspended") return res.status(403).json({ error: "account suspended" });
     await repo.users.touchLogin(user.id);
-    const token = jwt.sign({ sub: user.id, role: user.role }, jwtSecret, { expiresIn: jwtExpiresIn });
+    const token = jwt.sign(
+      { sub: user.id, role: user.role, permissions: user.permissions || [] },
+      jwtSecret,
+      { expiresIn: jwtExpiresIn }
+    );
     res.json({
       token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user.id, name: user.name, email: user.email,
+        role: user.role, permissions: user.permissions || [],
+      },
     });
   } catch (err) {
     next(err);

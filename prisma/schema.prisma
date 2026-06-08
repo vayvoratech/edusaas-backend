@@ -12,22 +12,70 @@ model User {
   id            String         @id @default(uuid())
   name          String
   email         String         @unique
-  role          String
+  role_id       String
   password_hash String
   status        String         @default("active")
   last_login    DateTime?
   created_at    DateTime       @default(now())
 
-  profile       Profile?
-  assessments   Assessment[]
-  gapReports    GapReport[]
-  enrollments   Enrollment[]
-  jobs          Job[]          @relation("EmployerJobs")
-  applications  Application[]
-  notifications Notification[]
-  subscriptions Subscription[]
+  role            Role             @relation(fields: [role_id], references: [id])
+  profile         Profile?
+  assessments     Assessment[]
+  gapReports      GapReport[]
+  enrollments     Enrollment[]
+  jobs            Job[]            @relation("EmployerJobs")
+  applications    Application[]
+  notifications   Notification[]
+  subscriptions   Subscription[]
+  taughtCourses   Course[]         @relation("EducatorCourses")
+  progress        Progress[]
+  certificates    Certificate[]
+  achievements    Achievement[]
+  tasks           Task[]
+  recommendations Recommendation[]
+  announcements   Announcement[]   @relation("EducatorAnnouncements")
 
+  @@index([role_id])
   @@map("users")
+  @@schema("education")
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        String           @unique // student | educator | employer | admin
+  description String?
+  created_at  DateTime         @default(now())
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+  @@schema("education")
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  name        String           @unique // e.g. "courses:create"
+  description String?
+  category    String?          // grouping (e.g. "Courses", "Admin")
+  created_at  DateTime         @default(now())
+
+  roles RolePermission[]
+
+  @@map("permissions")
+  @@schema("education")
+}
+
+model RolePermission {
+  role_id       String
+  permission_id String
+  assigned_at   DateTime @default(now())
+
+  role       Role       @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permission_id], references: [id], onDelete: Cascade)
+
+  @@id([role_id, permission_id])
+  @@map("role_permissions")
   @@schema("education")
 }
 
@@ -80,9 +128,17 @@ model Course {
   description String?
   provider    String?
   category    String?
+  difficulty  String?  // beginner | intermediate | advanced
+  status      String   @default("active") // active | draft | archived
+  educator_id String?
   created_at  DateTime @default(now())
 
-  enrollments Enrollment[]
+  educator        User?            @relation("EducatorCourses", fields: [educator_id], references: [id], onDelete: SetNull)
+  enrollments     Enrollment[]
+  lessons         Lesson[]
+  certificates    Certificate[]
+  tasks           Task[]
+  recommendations Recommendation[]
 
   @@map("courses")
   @@schema("education")
@@ -108,6 +164,8 @@ model Job {
   id              String   @id @default(uuid())
   employer_id     String
   title           String
+  description     String?
+  requirements    String?
   required_skills String[]
   status          String   @default("open")
   created_at      DateTime @default(now())
@@ -120,11 +178,12 @@ model Job {
 }
 
 model Application {
-  id         String   @id @default(uuid())
-  job_id     String
-  student_id String
-  status     String   @default("submitted")
-  applied_at DateTime @default(now())
+  id          String   @id @default(uuid())
+  job_id      String
+  student_id  String
+  status      String   @default("submitted")
+  skill_match Float?
+  applied_at  DateTime @default(now())
 
   job     Job  @relation(fields: [job_id], references: [id], onDelete: Cascade)
   student User @relation(fields: [student_id], references: [id], onDelete: Cascade)
@@ -182,5 +241,142 @@ model Setting {
 
   @@unique([scope, key])
   @@map("settings")
+  @@schema("education")
+}
+
+model Lesson {
+  id          String   @id @default(uuid())
+  course_id   String
+  title       String
+  video_url   String?
+  duration    Int?     // minutes
+  order_index Int      @default(0)
+  created_at  DateTime @default(now())
+
+  course      Course       @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  quizzes     Quiz[]
+  assignments Assignment[]
+  progress    Progress[]
+
+  @@map("lessons")
+  @@schema("education")
+}
+
+model Quiz {
+  id            String @id @default(uuid())
+  lesson_id     String
+  questions     Json
+  passing_score Int    @default(60)
+
+  lesson Lesson @relation(fields: [lesson_id], references: [id], onDelete: Cascade)
+
+  @@map("quizzes")
+  @@schema("education")
+}
+
+model Assignment {
+  id              String   @id @default(uuid())
+  lesson_id       String
+  instructions    String?
+  submission_link String?
+  created_at      DateTime @default(now())
+
+  lesson Lesson @relation(fields: [lesson_id], references: [id], onDelete: Cascade)
+
+  @@map("assignments")
+  @@schema("education")
+}
+
+model Progress {
+  id                String   @id @default(uuid())
+  user_id           String
+  lesson_id         String
+  watched_duration  Int      @default(0)   // seconds watched
+  quiz_score        Int?
+  assignment_status String   @default("pending") // pending | submitted | graded
+  completion_flag   Boolean  @default(false)
+  updated_at        DateTime @updatedAt
+
+  user   User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lesson_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, lesson_id])
+  @@map("progress")
+  @@schema("education")
+}
+
+model Certificate {
+  id               String   @id @default(uuid())
+  user_id          String
+  course_id        String
+  certificate_code String   @unique
+  issued_date      DateTime @default(now())
+
+  user         User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  course       Course        @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  achievements Achievement[]
+
+  @@map("certificates")
+  @@schema("education")
+}
+
+model Achievement {
+  id             String   @id @default(uuid())
+  user_id        String
+  badge_name     String
+  milestone      String?
+  certificate_id String?
+  earned_at      DateTime @default(now())
+
+  user        User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  certificate Certificate? @relation(fields: [certificate_id], references: [id], onDelete: SetNull)
+
+  @@map("achievements")
+  @@schema("education")
+}
+
+model Task {
+  id        String    @id @default(uuid())
+  user_id   String
+  course_id String?
+  title     String
+  due_date  DateTime?
+  status    String    @default("pending") // pending | done
+  created_at DateTime  @default(now())
+
+  user   User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  course Course? @relation(fields: [course_id], references: [id], onDelete: SetNull)
+
+  @@map("tasks")
+  @@schema("education")
+}
+
+model Recommendation {
+  id         String   @id @default(uuid())
+  user_id    String
+  course_id  String
+  reason     String?
+  created_at DateTime @default(now())
+
+  user   User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [course_id], references: [id], onDelete: Cascade)
+
+  @@map("recommendations")
+  @@schema("education")
+}
+
+model Announcement {
+  id            String    @id @default(uuid())
+  educator_id   String
+  title         String
+  message       String
+  audience      String    @default("all") // all | course | educators
+  scheduled_at  DateTime?
+  attachment    String?
+  created_at    DateTime  @default(now())
+
+  educator User @relation("EducatorAnnouncements", fields: [educator_id], references: [id], onDelete: Cascade)
+
+  @@map("announcements")
   @@schema("education")
 }

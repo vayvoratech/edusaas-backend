@@ -1,6 +1,6 @@
 const express = require("express");
 const repo = require("../data");
-const { authRequired, roleRequired } = require("../middleware/auth");
+const { authRequired, permissionRequired } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -32,7 +32,7 @@ const stripPwd = (u) => {
  *       200: { description: Array of users }
  *       403: { description: Forbidden }
  */
-router.get("/users", authRequired, roleRequired("admin"), async (req, res, next) => {
+router.get("/users", authRequired, permissionRequired("users:list"), async (req, res, next) => {
   try {
     const users = await repo.users.list({
       role: req.query.role || undefined,
@@ -86,7 +86,7 @@ router.get("/users", authRequired, roleRequired("admin"), async (req, res, next)
  *       204: { description: Deleted }
  *       404: { description: Not found }
  */
-router.patch("/users/:id", authRequired, roleRequired("admin"), async (req, res, next) => {
+router.patch("/users/:id", authRequired, permissionRequired("users:update"), async (req, res, next) => {
   try {
     const allowed = ["name", "role", "status"];
     const data = {};
@@ -105,7 +105,7 @@ router.patch("/users/:id", authRequired, roleRequired("admin"), async (req, res,
   }
 });
 
-router.delete("/users/:id", authRequired, roleRequired("admin"), async (req, res, next) => {
+router.delete("/users/:id", authRequired, permissionRequired("users:delete"), async (req, res, next) => {
   try {
     if (req.params.id === req.user.sub) {
       return res.status(400).json({ error: "cannot delete yourself" });
@@ -129,7 +129,7 @@ router.delete("/users/:id", authRequired, roleRequired("admin"), async (req, res
  *       200: { description: Insights object }
  *       403: { description: Forbidden }
  */
-router.get("/insights", authRequired, roleRequired("admin"), async (req, res, next) => {
+router.get("/insights", authRequired, permissionRequired("admin:insights"), async (req, res, next) => {
   try {
     res.json(await repo.insights());
   } catch (err) {

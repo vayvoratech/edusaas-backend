@@ -17,6 +17,15 @@ const adminRoutes = require("./src/routes/admin.routes");
 const subscriptionsRoutes = require("./src/routes/subscriptions.routes");
 const reportsRoutes = require("./src/routes/reports.routes");
 const settingsRoutes = require("./src/routes/settings.routes");
+const lessonsRoutes = require("./src/routes/lessons.routes");
+const progressRoutes = require("./src/routes/progress.routes");
+const certificatesRoutes = require("./src/routes/certificates.routes");
+const achievementsRoutes = require("./src/routes/achievements.routes");
+const tasksRoutes = require("./src/routes/tasks.routes");
+const recommendationsRoutes = require("./src/routes/recommendations.routes");
+const announcementsRoutes = require("./src/routes/announcements.routes");
+const dashboardRoutes = require("./src/routes/dashboard.routes");
+const rbacRoutes = require("./src/routes/rbac.routes");
 
 const { notFound, errorHandler } = require("./src/middleware/errorHandler");
 
@@ -48,6 +57,20 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/subscriptions", subscriptionsRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/settings", settingsRoutes);
+
+// Lesson routes are nested under /api/courses for /:id/lessons,
+// plus a top-level /api/lessons/lesson/:id for single-lesson detail.
+app.use("/api/courses", lessonsRoutes);
+app.use("/api/lessons", lessonsRoutes);
+
+app.use("/api/progress", progressRoutes);
+app.use("/api/certificates", certificatesRoutes);
+app.use("/api/achievements", achievementsRoutes);
+app.use("/api/tasks", tasksRoutes);
+app.use("/api/recommendations", recommendationsRoutes);
+app.use("/api/announcements", announcementsRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/rbac", rbacRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
