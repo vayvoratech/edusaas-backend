@@ -1,97 +1,102 @@
 # EDU-SAAS Backend
 
-Node.js + Express + Prisma. Default storage is in-memory; flip `USE_DB=true` to use PostgreSQL.
+Node.js + Express + Prisma. Two environments out of the box:
+
+| Env | Storage | File | Use case |
+|---|---|---|---|
+| **dev** | In-memory (resets on restart) | `.env.dev` | Local UI work, demos, no DB needed |
+| **stage** | Azure PostgreSQL (persistent) | `.env.stage` | Real data, integration testing |
+
+Both files are gitignored — they hold secrets.
 
 ## Setup
 
 ```bash
 npm install
-cp .env.example .env
-# edit .env with your DATABASE_URL and JWT_SECRET
 ```
+
+That's it. The env files are already in place; the `.env.stage` already points at the team's Azure DB.
 
 ## Run
 
 ```bash
-npm start              # production
-npm run dev            # nodemon
+npm run start:dev    # in-memory mode
+npm run start:stage  # connects to Azure Postgres
+npm start            # alias for start:stage
+npm run dev          # nodemon + dev env
+npm run dev:stage    # nodemon + stage env
 ```
+
+On boot you'll see `[env] APP_ENV=dev` or `[env] APP_ENV=stage` so you always know which one is active.
 
 - API root: http://localhost:5000
 - Swagger UI: http://localhost:5000/api-docs
 
-## Storage modes
+## How env selection works
 
-| `.env` `USE_DB` | Behaviour |
-|---|---|
-| unset / `false` | In-memory store, seeded with `admin@edu.local / admin123` and `priya.sharma@email.com / demo123`. Data resets on restart. |
-| `true` | Connects to PostgreSQL via Prisma using `DATABASE_URL`. |
+`src/config/env.js` reads `APP_ENV` and loads `.env.<APP_ENV>` first, then `.env` as a fallback. The npm scripts above set `APP_ENV` automatically via `cross-env`.
 
-## Switching to PostgreSQL
+If you want to add a third env (e.g. `prod`):
+1. Create `.env.prod` (already gitignored)
+2. Run `cross-env APP_ENV=prod node server.js`
 
-The Prisma schema is already written ([prisma/schema.prisma](prisma/schema.prisma)) for these 10 tables in the `education` schema:
-
-`users, profiles, assessments, gap_reports, courses, enrollments, jobs, applications, notifications, subscriptions`
-
-Steps:
-
-```bash
-# 1. Verify you can reach the DB
-#    Windows:
-powershell -Command "Test-NetConnection 192.168.1.12 -Port 5432"
-
-# 2. Set USE_DB=true and a valid DATABASE_URL in .env (special characters URL-encoded)
-# Example: postgresql://user:Dev%40123@host:5432/edu_saas_db?schema=education
-
-# 3. Generate Prisma client
-npm run db:generate
-
-# 4. Create tables (first time) or apply pending migrations
-npm run db:migrate
-
-# 5. Seed admin + student + sample courses
-npm run db:seed
-
-# 6. Start the server
-npm start
-```
-
-## Troubleshooting
-
-**`P1001: Can't reach database server`**
-The DB host is not reachable from your machine. Verify:
-- Postgres machine is running and on the same LAN
-- `postgresql.conf` has `listen_addresses = '*'`
-- `pg_hba.conf` allows your client IP, e.g. `host all all 192.168.1.0/24 md5`
-- Windows Firewall on the DB machine allows inbound TCP 5432
-- Restart Postgres after any config change
-
-**`UNABLE_TO_VERIFY_LEAF_SIGNATURE` during `npm install` or `prisma`**
-Corporate proxy intercepting TLS. Workarounds (dev only):
-```powershell
-npm config set strict-ssl false
-$env:NODE_TLS_REJECT_UNAUTHORIZED='0'
-```
-
-## Default seed credentials
+## Test users (seeded in both envs)
 
 | Email | Password | Role |
 |---|---|---|
 | `admin@edu.local` | `admin123` | admin |
 | `priya.sharma@email.com` | `demo123` | student |
+| `yash@educator.local` | `demo123` | educator |
+| `ankit@employer.local` | `demo123` | employer |
+
+Or sign up new users via the UI — in **stage** they persist, in **dev** they live until the next restart.
+
+## Working with the Azure DB
+
+Prisma commands need to read `.env.stage`, so use the staged scripts:
+
+```bash
+npm run db:migrate:stage    # apply pending migrations
+npm run db:seed:stage       # seed roles/permissions/users
+npm run db:studio:stage     # open Prisma Studio
+npm run db:push:stage       # push schema without a migration
+npm run db:generate         # regenerate Prisma Client (no DB needed)
+```
+
+The DB schema lives in `education` (not `public`). See [prisma/schema.prisma](prisma/schema.prisma).
+
+## RBAC
+
+Roles + permissions are stored in dedicated tables (`roles`, `permissions`, `role_permissions`). The canonical catalog is defined in [src/config/rbac.js](src/config/rbac.js) — edit there, then re-seed.
+
+```bash
+npm run db:seed:stage   # re-runs upserts; safe to re-run
+```
+
+Routes use `permissionRequired('courses:create')` from [src/middleware/auth.js](src/middleware/auth.js).
+
+## Troubleshooting
+
+**`P1001: Can't reach database server`**
+- Verify you're on a network that can reach the Azure private endpoint.
+- Test: `npm run db:studio:stage` — if Studio opens, connectivity is fine.
+
+**`UNABLE_TO_VERIFY_LEAF_SIGNATURE` / TLS errors**
+The Azure cert chain isn't trusted by Node by default. `.env.stage` already sets `NODE_TLS_REJECT_UNAUTHORIZED=0` for this reason. For prod you should install the proper CA bundle instead.
+
+**Forgot which env you're in**
+Look at the server boot log — `[env] APP_ENV=...` is the first line. Or `curl localhost:5000` returns the API root.
 
 ## Project layout
 
 ```
 src/
-├── config/        env + swagger config
-├── data/          repository toggle (memory vs Prisma)
-│   ├── memoryRepo.js
-│   ├── prismaRepo.js
-│   └── index.js
-├── middleware/    auth (JWT), error handler
-└── routes/        one file per resource
+├── config/         env (APP_ENV-aware), swagger, rbac catalog
+├── data/           repo toggle (memory vs Prisma) + dataStore seed
+├── middleware/     auth (JWT + RBAC), error handler
+└── routes/         one file per resource
 prisma/
-├── schema.prisma  data model
-└── seed.js        npm run db:seed
+├── schema.prisma   data model (16 tables under `education` schema)
+├── migrations/     versioned schema changes
+└── seed.js         run via `npm run db:seed:stage`
 ```

@@ -4,13 +4,17 @@
   "description": "EDU-SAAS backend API",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
+    "start": "cross-env APP_ENV=stage node server.js",
+    "start:dev": "cross-env APP_ENV=dev node server.js",
+    "start:stage": "cross-env APP_ENV=stage node server.js",
+    "dev": "cross-env APP_ENV=dev nodemon server.js",
+    "dev:stage": "cross-env APP_ENV=stage nodemon server.js",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev --name init",
-    "db:push": "prisma db push",
-    "db:seed": "node prisma/seed.js",
-    "db:studio": "prisma studio"
+    "db:migrate:stage": "dotenv -e .env.stage -- prisma migrate dev",
+    "db:seed:stage": "dotenv -e .env.stage -- prisma db seed",
+    "db:studio:stage": "dotenv -e .env.stage -- prisma studio",
+    "db:push:stage": "dotenv -e .env.stage -- prisma db push",
+    "db:seed": "node prisma/seed.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
@@ -32,6 +36,8 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
+    "dotenv-cli": "^11.0.0",
     "nodemon": "^3.1.4"
   }
 }

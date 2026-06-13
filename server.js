@@ -2,7 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 
-const { port } = require("./src/config/env");
+const { port, appEnv } = require("./src/config/env");
 const swaggerSpec = require("./src/config/swagger");
 
 const authRoutes = require("./src/routes/auth.routes");
@@ -76,6 +76,7 @@ app.use(notFound);
 app.use(errorHandler);
 
 app.listen(port, () => {
+  console.log(`[env] APP_ENV=${appEnv}`);
   console.log(`EDU-SAAS backend running at http://localhost:${port}`);
   console.log(`Swagger docs:           http://localhost:${port}/api-docs`);
 });
