@@ -29,17 +29,35 @@ const router = express.Router();
  */
 router.post("/", authRequired, async (req, res, next) => {
   try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can submit assessments.",
+      });
+    }
+
     const { type, score, answers } = req.body || {};
     if (!type || typeof score !== "number") {
       return res.status(400).json({ error: "type (string) and score (number) are required" });
     }
+    if (score < 0 || score > 100) {
+      return res.status(400).json({
+        error: "Score must be between 0 and 100.",
+      });
+    }
+
+    if (answers && !Array.isArray(answers)) {
+      return res.status(400).json({
+        error: "Answers must be an array.",
+      });
+    }
+
     const assessment = await repo.assessments.create({
       user_id: req.user.sub,
       type,
       score,
       answers: answers || [],
     });
-    res.status(201).json(assessment);
+    return res.status(201).json(assessment);
   } catch (err) {
     next(err);
   }
@@ -64,8 +82,21 @@ router.post("/", authRequired, async (req, res, next) => {
 router.get("/:id/results", authRequired, async (req, res, next) => {
   try {
     const a = await repo.assessments.findById(req.params.id);
-    if (!a) return res.status(404).json({ error: "assessment not found" });
-    res.json(a);
+    if (!a) {
+      return res.status(404).json({
+        error: "Assessment not found.",
+      });
+    }
+
+    const isOwner = a.user_id === req.user.sub;
+    const isAdmin = req.user.role === "admin";
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        error: "You are not authorized to view this assessment.",
+      });
+    }
+    return res.json(a);
   } catch (err) {
     next(err);
   }

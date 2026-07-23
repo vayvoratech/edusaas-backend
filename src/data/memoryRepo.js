@@ -3,6 +3,24 @@ const { db, newId } = require("./dataStore");
 
 const clone = (x) => (x === null || x === undefined ? x : JSON.parse(JSON.stringify(x)));
 
+// Buckets records into the last 4 rolling 7-day windows (Week 1 = oldest, Week 4 = most
+// recent, i.e. this week), summing valueFn(record) into whichever window record[dateField]
+// falls in. Records older than 28 days are dropped.
+function weeklyBuckets(records, dateField, valueFn) {
+  const buckets = [0, 0, 0, 0];
+  const now = Date.now();
+  const msDay = 24 * 60 * 60 * 1000;
+  for (const r of records) {
+    const ts = new Date(r[dateField]).getTime();
+    if (Number.isNaN(ts)) continue;
+    const daysAgo = Math.floor((now - ts) / msDay);
+    if (daysAgo < 0 || daysAgo >= 28) continue;
+    const idx = 3 - Math.floor(daysAgo / 7);
+    if (idx >= 0 && idx < 4) buckets[idx] += valueFn(r);
+  }
+  return buckets.map((value, i) => ({ week: `Week ${i + 1}`, value: Math.round(value * 10) / 10 }));
+}
+
 // ---- RBAC helpers ----
 function roleByName(name) {
   return db.roles.find((r) => r.name === name) || null;
@@ -347,18 +365,45 @@ module.exports = {
     listByUser: async (userId) => clone(db.progress.filter((p) => p.user_id === userId)),
     upsert: async (userId, lessonId, patch) => {
       const existing = db.progress.find((p) => p.user_id === userId && p.lesson_id === lessonId);
+      let saved;
       if (existing) {
         Object.assign(existing, patch, { updated_at: new Date().toISOString() });
-        return clone(existing);
+        saved = existing;
+      } else {
+        const p = {
+          id: newId(), user_id: userId, lesson_id: lessonId,
+          watched_duration: 0, quiz_score: null, assignment_status: "pending",
+          completion_flag: false, updated_at: new Date().toISOString(),
+          ...patch,
+        };
+        db.progress.push(p);
+        saved = p;
       }
-      const p = {
-        id: newId(), user_id: userId, lesson_id: lessonId,
-        watched_duration: 0, quiz_score: null, assignment_status: "pending",
-        completion_flag: false, updated_at: new Date().toISOString(),
-        ...patch,
-      };
-      db.progress.push(p);
-      return clone(p);
+
+      // Roll lesson-level progress up into the enrollment's completion_percentage,
+      // so dashboards/certificates reflect real course progress instead of staying
+      // at the 0 they're set to on enrollment.
+      const lesson = db.lessons.find((l) => l.id === lessonId);
+      if (lesson) {
+        const courseLessons = db.lessons.filter((l) => l.course_id === lesson.course_id);
+        const totalLessons = courseLessons.length;
+        if (totalLessons > 0) {
+          const courseLessonIds = new Set(courseLessons.map((l) => l.id));
+          const completedCount = db.progress.filter(
+            (p) => p.user_id === userId && courseLessonIds.has(p.lesson_id) && p.completion_flag
+          ).length;
+          const pct = Math.min(100, Math.round((completedCount / totalLessons) * 100));
+          const enrollment = db.enrollments.find(
+            (e) => e.user_id === userId && e.course_id === lesson.course_id
+          );
+          if (enrollment) {
+            enrollment.completion_percentage = pct;
+            if (pct >= 100) enrollment.status = "completed";
+          }
+        }
+      }
+
+      return clone(saved);
     },
   },
 
@@ -466,7 +511,7 @@ module.exports = {
       courseRatings: 235,
       learnerProficiency: { basic: 23, intermediate: 45, advanced: 32 },
       skillGapAnalysis: [
-        { skill: "Technical Skills", value: 80 },
+        { skill: "Technical Skills", value: 10 },
         { skill: "Communication", value: 60 },
         { skill: "Critical Thinking", value: 70 },
         { skill: "Engagement", value: 55 },
@@ -519,12 +564,21 @@ module.exports = {
       tasksDue: tasks.filter((t) => t.status === "pending").length,
       learningHoursLogged: hoursLogged || 28,
       skillsReadiness: skillsReadiness || 72,
-      learningProgress: [
-        { week: "Week 1", value: 20 },
-        { week: "Week 2", value: 60 },
-        { week: "Week 3", value: 55 },
-        { week: "Week 4", value: 85 },
-      ],
+      // Weekly count of lessons completed — Dashboard's "Learning Progress" chart.
+      learningProgress: weeklyBuckets(
+        progress.filter((p) => p.completion_flag),
+        "updated_at",
+        () => 1
+      ),
+      // Weekly hours watched — Insights page's "Engagement Trends" chart.
+      // Note: watched_duration is the latest reported total for a lesson (not additive),
+      // so this reflects hours logged as of each lesson's most recent update, bucketed
+      // by week — a reasonable proxy for engagement without a full event log.
+      engagementTrends: weeklyBuckets(
+        progress,
+        "updated_at",
+        (p) => (p.watched_duration || 0) / 3600
+      ),
       recentActivity: [
         { id: "1", title: "Submitted Python Assignment", when: "2 hours ago" },
         { id: "2", title: "Completed Soft Skills Quiz", when: "Yesterday" },

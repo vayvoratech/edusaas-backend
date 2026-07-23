@@ -10,17 +10,27 @@ const router = express.Router();
  *   get:
  *     tags: [Reports]
  *     summary: Reports dashboard summary (totals + charts)
- *     security: [{ bearerAuth: [] }]
+ *     security:
+ *       - bearerAuth: []
  *     responses:
- *       200: { description: Summary object }
+ *       200:
+ *         description: Summary object
  */
-router.get("/summary", authRequired, permissionRequired("reports:view"), async (req, res, next) => {
-  try {
-    res.json(await repo.reports.summary());
-  } catch (err) {
-    next(err);
+router.get(
+  "/summary",
+  authRequired,
+  permissionRequired("reports:view"),
+  async (req, res, next) => {
+    try {
+      const summary = await repo.reports.summary();
+
+      return res.json(summary);
+
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 /**
  * @openapi
@@ -28,17 +38,27 @@ router.get("/summary", authRequired, permissionRequired("reports:view"), async (
  *   get:
  *     tags: [Reports]
  *     summary: Top reports list
- *     security: [{ bearerAuth: [] }]
+ *     security:
+ *       - bearerAuth: []
  *     responses:
- *       200: { description: Array of reports }
+ *       200:
+ *         description: Array of reports
  */
-router.get("/", authRequired, permissionRequired("reports:view"), async (req, res, next) => {
-  try {
-    res.json(await repo.reports.list());
-  } catch (err) {
-    next(err);
+router.get(
+  "/",
+  authRequired,
+  permissionRequired("reports:view"),
+  async (req, res, next) => {
+    try {
+      const reports = await repo.reports.list();
+
+      return res.json(reports);
+
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 /**
  * @openapi
@@ -46,16 +66,26 @@ router.get("/", authRequired, permissionRequired("reports:view"), async (req, re
  *   get:
  *     tags: [Reports]
  *     summary: Export history
- *     security: [{ bearerAuth: [] }]
+ *     security:
+ *       - bearerAuth: []
  *     responses:
- *       200: { description: Array of exported reports }
+ *       200:
+ *         description: Array of exported reports
  */
-router.get("/exports", authRequired, permissionRequired("reports:view"), async (req, res, next) => {
-  try {
-    res.json(await repo.reports.listExports());
-  } catch (err) {
-    next(err);
+router.get(
+  "/exports",
+  authRequired,
+  permissionRequired("reports:view"),
+  async (req, res, next) => {
+    try {
+      const exports = await repo.reports.listExports();
+
+      return res.json(exports);
+
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 module.exports = router;

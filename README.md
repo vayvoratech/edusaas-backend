@@ -15,7 +15,8 @@ Both files are gitignored — they hold secrets.
 npm install
 ```
 
-That's it. The env files are already in place; the `.env.stage` already points at the team's Azure DB.
+
+Install dependencies and configure the required environment files (`.env.dev` and `.env.stage`) using the values provided by your team.
 
 ## Run
 
@@ -92,11 +93,11 @@ Look at the server boot log — `[env] APP_ENV=...` is the first line. Or `curl 
 ```
 src/
 ├── config/         env (APP_ENV-aware), swagger, rbac catalog
-├── data/           repo toggle (memory vs Prisma) + dataStore seed
-├── middleware/     auth (JWT + RBAC), error handler
+├── data/           repo toggle (memory + Prisma) + dataStore seed
+├── middleware/     authentication, RBAC authorization, error handling
 └── routes/         one file per resource
 prisma/
-├── schema.prisma   data model (16 tables under `education` schema)
+├── schema.prisma   data model (26 tables under `education` schema)
 ├── migrations/     versioned schema changes
 └── seed.js         run via `npm run db:seed:stage`
 ```

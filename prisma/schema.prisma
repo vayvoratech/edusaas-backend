@@ -14,6 +14,7 @@ model User {
   email         String         @unique
   role_id       String
   password_hash String
+  career_goal   String?        // <-- Add 
   status        String         @default("active")
   last_login    DateTime?
   created_at    DateTime       @default(now())
@@ -34,6 +35,8 @@ model User {
   tasks           Task[]
   recommendations Recommendation[]
   announcements   Announcement[]   @relation("EducatorAnnouncements")
+  authOtps        AuthOtp[]
+  refreshTokens   RefreshToken[]
 
   @@index([role_id])
   @@map("users")
@@ -291,10 +294,13 @@ model Progress {
   id                String   @id @default(uuid())
   user_id           String
   lesson_id         String
-  watched_duration  Int      @default(0)   // seconds watched
+  watched_duration  Int      @default(0)
   quiz_score        Int?
-  assignment_status String   @default("pending") // pending | submitted | graded
+  assignment_status String   @default("pending")
   completion_flag   Boolean  @default(false)
+
+  completed_at      DateTime?
+
   updated_at        DateTime @updatedAt
 
   user   User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
@@ -378,5 +384,36 @@ model Announcement {
   educator User @relation("EducatorAnnouncements", fields: [educator_id], references: [id], onDelete: Cascade)
 
   @@map("announcements")
+  @@schema("education")
+}
+
+model AuthOtp {
+  id          String   @id @default(uuid())
+  user_id     String   @unique
+  otp_hash    String
+  expires_at  DateTime
+  verified_at DateTime?
+  created_at  DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("auth_otps")
+  @@schema("education")
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  user_id     String
+  token_hash  String
+  expires_at  DateTime
+  created_at  DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([expires_at])
+
+  @@map("refresh_tokens")
   @@schema("education")
 }

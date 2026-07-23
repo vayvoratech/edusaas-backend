@@ -16,8 +16,17 @@ const router = express.Router();
  */
 router.get("/", authRequired, async (req, res, next) => {
   try {
-    res.json(await repo.certificates.listByUser(req.user.sub));
-  } catch (err) { next(err); }
+    // Certificates are intended for students.
+    if (req.user.role !== "student") {
+      return res.json([]);
+    }
+
+    return res.json(
+      await repo.certificates.listByUser(req.user.sub)
+    );
+  } catch (err) {
+    next(err);
+  }
 });
 
 /**
@@ -25,27 +34,101 @@ router.get("/", authRequired, async (req, res, next) => {
  * /api/certificates:
  *   post:
  *     tags: [Certificates]
- *     summary: Issue a certificate (educator/admin)
+ *     summary: Issue a certificate (Admin only)
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
  *             required: [user_id, course_id]
  *             properties:
- *               user_id: { type: string }
- *               course_id: { type: string }
+ *               user_id:
+ *                 type: string
+ *               course_id:
+ *                 type: string
  *     responses:
- *       201: { description: Certificate issued }
+ *       201:
+ *         description: Certificate issued
  */
 router.post("/", authRequired, async (req, res, next) => {
   try {
+    // Only admins can issue certificates
+    if (req.user.role !== "admin") {
+      return res.status(403).json({
+        error: "Only administrators can issue certificates.",
+      });
+    }
+
     const { user_id, course_id } = req.body || {};
-    if (!user_id || !course_id) return res.status(400).json({ error: "user_id, course_id required" });
-    const cert = await repo.certificates.create({ user_id, course_id });
-    res.status(201).json(cert);
-  } catch (err) { next(err); }
+
+    if (!user_id || !course_id) {
+      return res.status(400).json({
+        error: "user_id and course_id are required.",
+      });
+    }
+
+    // Validate user
+    const user = await repo.users.findById(user_id);
+
+    if (!user) {
+      return res.status(404).json({
+        error: "User not found.",
+      });
+    }
+
+    // Validate course
+    const course = await repo.courses.findById(course_id);
+
+    if (!course) {
+      return res.status(404).json({
+        error: "Course not found.",
+      });
+    }
+
+    // Validate enrollment
+    const enrollment = await repo.enrollments.findOne(
+      user_id,
+      course_id
+    );
+
+    if (!enrollment) {
+      return res.status(400).json({
+        error: "User is not enrolled in this course.",
+      });
+    }
+
+    // Prevent issuing certificate before completion
+    if (enrollment.completion_percentage < 100) {
+      return res.status(400).json({
+        error: "Course must be completed before issuing a certificate.",
+      });
+    }
+
+    // Prevent duplicate certificates
+    const existingCertificate =
+      await repo.certificates.findByUserAndCourse(
+        user_id,
+        course_id
+      );
+
+    if (existingCertificate) {
+      return res.status(409).json({
+        error: "Certificate already exists.",
+      });
+    }
+
+    const certificate = await repo.certificates.create({
+      user_id,
+      course_id,
+    });
+
+    return res.status(201).json(certificate);
+
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

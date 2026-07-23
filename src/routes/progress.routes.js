@@ -16,7 +16,7 @@ const router = express.Router();
  */
 router.get("/", authRequired, async (req, res, next) => {
   try {
-    res.json(await repo.progress.listByUser(req.user.sub));
+    return res.json(await repo.progress.listByUser(req.user.sub));
   } catch (err) { next(err); }
 });
 
@@ -49,13 +49,54 @@ router.get("/", authRequired, async (req, res, next) => {
  */
 router.patch("/:lessonId", authRequired, async (req, res, next) => {
   try {
+    if (req.user.role !== "student") {
+    return res.status(403).json({
+      error: "Only students can update learning progress.",
+    });
+  }
     const allowed = ["watched_duration", "quiz_score", "assignment_status", "completion_flag"];
     const data = {};
+    if (
+      data.assignment_status &&
+      !["pending", "submitted", "graded"].includes(data.assignment_status)
+    ) {
+      return res.status(400).json({
+        error: "Invalid assignment status.",
+      });
+    }
+
+    if (
+      data.quiz_score !== undefined &&
+      (data.quiz_score < 0 || data.quiz_score > 100)
+    ) {
+      return res.status(400).json({
+        error: "Quiz score must be between 0 and 100.",
+      });
+    }
+
+    if (
+      data.watched_duration !== undefined &&
+      data.watched_duration < 0
+    ) {
+      return res.status(400).json({
+        error: "Watched duration cannot be negative.",
+      });
+    }
     for (const k of allowed) if (req.body[k] !== undefined) data[k] = req.body[k];
     const lesson = await repo.lessons.findById(req.params.lessonId);
     if (!lesson) return res.status(404).json({ error: "lesson not found" });
+    const enrollment = await repo.enrollments.findOne(
+      req.user.sub,
+      lesson.course_id
+    );
+
+    if (!enrollment) {
+      return res.status(403).json({
+        error: "You are not enrolled in this course.",
+      });
+    }
     const updated = await repo.progress.upsert(req.user.sub, req.params.lessonId, data);
-    res.json(updated);
+    return res.json(updated);
   } catch (err) { next(err); }
 });
 

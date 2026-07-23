@@ -9,53 +9,78 @@ const router = express.Router();
  * /api/rbac/roles:
  *   get:
  *     tags: [RBAC]
- *     summary: List all roles (admin)
- *     security: [{ bearerAuth: [] }]
+ *     summary: List all roles (Admin)
+ *     security:
+ *       - bearerAuth: []
  *     responses:
- *       200: { description: Array of roles }
+ *       200:
+ *         description: Array of roles
  */
-router.get("/roles", authRequired, roleRequired("admin"), async (req, res, next) => {
-  try {
-    const roles = await repo.roles.list();
-    // hydrate each with permissions[]
-    const out = await Promise.all(
-      roles.map(async (r) => ({
-        ...r,
-        permissions: await repo.roles.permissionsForRoleId(r.id),
-      }))
-    );
-    res.json(out);
-  } catch (err) { next(err); }
-});
+router.get(
+  "/roles",
+  authRequired,
+  roleRequired("admin"),
+  async (req, res, next) => {
+    try {
+      const roles = await repo.roles.list();
+
+      const rolesWithPermissions = await Promise.all(
+        roles.map(async (role) => ({
+          ...role,
+          permissions: await repo.roles.permissionsForRoleId(role.id),
+        }))
+      );
+
+      return res.json(rolesWithPermissions);
+
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /**
  * @openapi
  * /api/rbac/permissions:
  *   get:
  *     tags: [RBAC]
- *     summary: List all permissions (admin)
- *     security: [{ bearerAuth: [] }]
+ *     summary: List all permissions (Admin)
+ *     security:
+ *       - bearerAuth: []
  *     responses:
- *       200: { description: Array of permissions }
+ *       200:
+ *         description: Array of permissions
  */
-router.get("/permissions", authRequired, roleRequired("admin"), async (req, res, next) => {
-  try {
-    res.json(await repo.permissions.list());
-  } catch (err) { next(err); }
-});
+router.get(
+  "/permissions",
+  authRequired,
+  roleRequired("admin"),
+  async (req, res, next) => {
+    try {
+      const permissions = await repo.permissions.list();
+
+      return res.json(permissions);
+
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /**
  * @openapi
  * /api/rbac/me:
  *   get:
  *     tags: [RBAC]
- *     summary: Current user's role and permissions (decoded from JWT)
- *     security: [{ bearerAuth: [] }]
+ *     summary: Current user's role and permissions
+ *     security:
+ *       - bearerAuth: []
  *     responses:
- *       200: { description: Permissions object }
+ *       200:
+ *         description: Current user's RBAC information
  */
-router.get("/me", authRequired, async (req, res) => {
-  res.json({
+router.get("/me", authRequired, (req, res) => {
+  return res.json({
     sub: req.user.sub,
     role: req.user.role,
     permissions: req.user.permissions || [],

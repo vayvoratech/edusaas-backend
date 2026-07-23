@@ -1,140 +1,154 @@
-// Seed initial data for Postgres. Run with: npx prisma db seed
-// Order matters: permissions + roles + role_permissions BEFORE users
-// (users now require a role_id FK).
 const { PrismaClient } = require("@prisma/client");
-const bcrypt = require("bcryptjs");
-const { PERMISSIONS, ROLES, ROLE_PERMISSIONS } = require("../src/config/rbac");
+require("../src/config/env");
 
+const PERMISSIONS = [
+  // Dashboards
+  { name: "dashboards:student", category: "Dashboards", description: "Access the student dashboard" },
+  { name: "dashboards:educator", category: "Dashboards", description: "Access the educator dashboard" },
+  { name: "dashboards:employer", category: "Dashboards", description: "Access the employer dashboard" },
+  { name: "admin:insights", category: "Admin", description: "Access admin insights" },
+
+  // Courses
+  { name: "courses:create", category: "Courses", description: "Create a new course" },
+  { name: "courses:update", category: "Courses", description: "Update a course" },
+  { name: "courses:delete", category: "Courses", description: "Delete a course" },
+  { name: "courses:assign", category: "Courses", description: "Assign a course to a student" },
+  { name: "courses:enroll", category: "Courses", description: "Enroll in a course" },
+
+  // Lessons
+  { name: "lessons:create", category: "Lessons", description: "Create a new lesson" },
+  { name: "lessons:update", category: "Lessons", description: "Update a lesson" },
+  { name: "lessons:delete", category: "Lessons", description: "Delete a lesson" },
+
+  // Users
+  { name: "users:list", category: "Users", description: "List all users" },
+  { name: "users:profile:view", category: "Users", description: "View user profiles" },
+  { name: "users:profile:update", category: "Users", description: "Update user profiles" },
+
+  // Jobs
+  { name: "jobs:create", category: "Jobs", description: "Create a job posting" },
+];
+
+const ROLES = ["student", "educator", "admin", "employer"];
+
+const ROLE_PERMISSIONS = {
+  student: [
+    "dashboards:student",
+    "courses:enroll",
+    "users:profile:view",
+    "users:profile:update",
+  ],
+  educator: [
+    "dashboards:educator",
+    "courses:create",
+    "courses:update",
+    "courses:delete",
+    "courses:assign", // <-- This is the new permission being added
+    "lessons:create",
+    "lessons:update",
+    "lessons:delete",
+  ],
+  admin: PERMISSIONS.map((p) => p.name), // Admin gets all permissions
+  employer: [
+    "dashboards:employer",
+    "jobs:create",
+  ],
+};
 const prisma = new PrismaClient();
 
 async function main() {
-  // ---- 1. Permissions ----
-  for (const p of PERMISSIONS) {
-    await prisma.permission.upsert({
-      where: { name: p.name },
-      update: { description: p.description, category: p.category },
-      create: { name: p.name, description: p.description, category: p.category },
-    });
-  }
-  console.log(`✓ ${PERMISSIONS.length} permissions seeded`);
-
-  // ---- 2. Roles ----
-  for (const name of ROLES) {
-    await prisma.role.upsert({
-      where: { name },
-      update: {},
-      create: { name, description: `${name[0].toUpperCase()}${name.slice(1)} role` },
-    });
-  }
-  console.log(`✓ ${ROLES.length} roles seeded`);
-
-  // ---- 3. Role-permission mappings ----
-  const allPerms = await prisma.permission.findMany();
-  const permByName = Object.fromEntries(allPerms.map((p) => [p.name, p]));
-  const allRoles = await prisma.role.findMany();
-  const roleByName = Object.fromEntries(allRoles.map((r) => [r.name, r]));
-
-  for (const [roleName, permNames] of Object.entries(ROLE_PERMISSIONS)) {
-    const role = roleByName[roleName];
-    if (!role) continue;
-    for (const permName of permNames) {
-      const perm = permByName[permName];
-      if (!perm) continue;
-      await prisma.rolePermission.upsert({
-        where: { role_id_permission_id: { role_id: role.id, permission_id: perm.id } },
-        update: {},
-        create: { role_id: role.id, permission_id: perm.id },
-      });
-    }
-  }
-  console.log("✓ role-permission mappings seeded");
-
-  // ---- 4. Users (now with role_id) ----
-  const usersToSeed = [
-    { name: "Admin User", email: "admin@edu.local", role: "admin", password: "admin123" },
-    { name: "Priya Sharma", email: "priya.sharma@email.com", role: "student", password: "demo123" },
-    { name: "Yash Mehta", email: "yash@educator.local", role: "educator", password: "demo123" },
-    { name: "Ankit Verma", email: "ankit@employer.local", role: "employer", password: "demo123" },
-  ];
-
-  for (const u of usersToSeed) {
-    const role = roleByName[u.role];
-    if (!role) {
-      console.warn(`Skipping ${u.email} — role ${u.role} not found`);
-      continue;
-    }
-    await prisma.user.upsert({
-      where: { email: u.email },
-      update: {},
+  console.log("Start seeding...");
+  const permissionByName = new Map();
+  for (const permission of PERMISSIONS) {
+    const row = await prisma.permission.upsert({
+      where: { name: permission.name },
+      update: {
+        category: permission.category,
+        description: permission.description,
+      },
       create: {
-        name: u.name,
-        email: u.email,
+        name: permission.name,
+        category: permission.category,
+        description: permission.description,
+      },
+    });
+    permissionByName.set(row.name, row);
+  }
+  console.log("Permissions created/verified.");
+
+  const roleByName = new Map();
+  for (const roleName of ROLES) {
+    const role = await prisma.role.upsert({
+      where: { name: roleName },
+      update: {
+        description: `${roleName[0].toUpperCase()}${roleName.slice(1)} role`,
+      },
+      create: {
+        name: roleName,
+        description: `${roleName[0].toUpperCase()}${roleName.slice(1)} role`,
+      },
+    });
+    roleByName.set(role.name, role);
+  }
+  console.log("Roles created/verified.");
+
+  for (const [roleName, permissionNames] of Object.entries(ROLE_PERMISSIONS)) {
+    const role = roleByName.get(roleName);
+    if (!role) {
+      throw new Error(`RBAC config references unknown role: ${roleName}`);
+    }
+
+    const permissionsToConnect = [];
+
+    for (const permissionName of permissionNames) {
+      const permission = permissionByName.get(permissionName);
+      if (!permission) {
+        throw new Error(`RBAC config references unknown permission: ${permissionName}`);
+      }
+      permissionsToConnect.push({ id: permission.id });
+    }
+
+    // First, delete all existing permissions for this role to ensure a clean slate.
+    await prisma.rolePermission.deleteMany({
+      where: {
         role_id: role.id,
-        password_hash: bcrypt.hashSync(u.password, 10),
-        status: "active",
       },
     });
-  }
-  console.log(`✓ ${usersToSeed.length} users seeded`);
 
-  // ---- 5. Courses ----
-  const educator = await prisma.user.findUnique({ where: { email: "yash@educator.local" } });
-  const existingCourses = await prisma.course.count();
-  if (existingCourses === 0) {
-    const courses = [
-      { title: "Advanced Python", description: "Decorators, generators, dataclasses.", provider: "EDU-SAAS", category: "Programming", difficulty: "advanced", status: "active", educator_id: educator?.id },
-      { title: "Data Science Basics", description: "Pandas, numpy, visualization.", provider: "EDU-SAAS", category: "Data Science", difficulty: "beginner", status: "active", educator_id: educator?.id },
-      { title: "Web Development", description: "HTML, CSS, JavaScript.", provider: "EDU-SAAS", category: "Web Dev", difficulty: "beginner", status: "active", educator_id: educator?.id },
-      { title: "Soft Skills Development", description: "Communication and teamwork.", provider: "EDU-SAAS", category: "Soft Skills", difficulty: "beginner", status: "active", educator_id: educator?.id },
-      { title: "Machine Learning 101", description: "Intro to ML algorithms.", provider: "EDU-SAAS", category: "AI & ML", difficulty: "intermediate", status: "draft", educator_id: educator?.id },
-    ];
-    await prisma.course.createMany({ data: courses });
-    console.log(`✓ ${courses.length} courses seeded`);
-  }
-
-  // ---- 6. Sample job ----
-  const employer = await prisma.user.findUnique({ where: { email: "ankit@employer.local" } });
-  const existingJobs = await prisma.job.count();
-  if (existingJobs === 0 && employer) {
-    await prisma.job.create({
+    // Now, create the new associations in the RolePermission join table.
+    await prisma.role.update({
+      where: {
+        name: roleName,
+      },
       data: {
-        employer_id: employer.id,
-        title: "Junior Frontend Developer",
-        description: "Build full-stack web apps.",
-        requirements: "HTML, CSS, JavaScript, React.",
-        required_skills: ["html", "css", "javascript", "react"],
-        status: "open",
+        permissions: {
+          create: permissionsToConnect.map(p => ({ permission_id: p.id })),
+        },
       },
     });
-    console.log("✓ sample job seeded");
   }
+  console.log("Permissions mapped to roles.");
 
-  // ---- 7. Settings (system defaults) ----
-  const defaultSettings = {
-    enable_auto_backup: true,
-    two_factor_auth: true,
-    language: "en-US",
-    time_zone: "GMT-05:00",
-    email_alerts: true,
-    user_registration: true,
-    api_access: true,
-    organization_name: "EduSaaS",
-  };
-  for (const [key, value] of Object.entries(defaultSettings)) {
-    await prisma.setting.upsert({
-      where: { scope_key: { scope: "system", key } },
-      update: {},
-      create: { scope: "system", key, value },
-    });
+  const roles = await prisma.role.findMany({
+    orderBy: { name: "asc" },
+    include: {
+      permissions: {
+        include: { permission: true },
+        orderBy: { permission: { name: "asc" } },
+      },
+    },
+  });
+
+  console.log("[seed] RBAC initialized");
+  for (const role of roles) {
+    console.log(`[seed] ${role.name}: ${role.permissions.length} permissions`);
   }
-  console.log(`✓ ${Object.keys(defaultSettings).length} system settings seeded`);
-
-  console.log("\n🌱 Seed complete.");
+  console.log("Seeding finished.");
 }
 
 main()
-  .catch((e) => {
-    console.error(e);
+  .catch((err) => {
+    console.error("[seed] failed", err);
     process.exit(1);
   })
   .finally(async () => {

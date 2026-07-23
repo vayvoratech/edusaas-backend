@@ -25,11 +25,15 @@ const db = {
   tasks: [],
   recommendations: [],
   announcements: [],
+  authOtps: [],
+  refreshTokens: [],
   // RBAC
   roles: [],
   permissions: [],
   rolePermissions: [],
 };
+
+
 
 const newId = () => uuid();
 
@@ -283,3 +287,4 @@ function seed() {
 seed();
 
 module.exports = { db, newId };
+

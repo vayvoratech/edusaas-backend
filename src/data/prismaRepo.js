@@ -1,8 +1,132 @@
 const { PrismaClient } = require("@prisma/client");
+const crypto = require("crypto");
 
 const prisma = new PrismaClient();
 
 const iso = (d) => (d instanceof Date ? d.toISOString() : d);
+
+// Buckets records into the last 4 rolling 7-day windows (Week 1 = oldest, Week 4 = most
+// recent, i.e. this week), summing valueFn(record) into whichever window record[dateField]
+// falls in. Records older than 28 days are dropped.
+function weeklyBuckets(records, dateField, valueFn) {
+  const buckets = [0, 0, 0, 0];
+  const now = Date.now();
+  const msDay = 24 * 60 * 60 * 1000;
+  for (const r of records) {
+    const ts = new Date(r[dateField]).getTime();
+    if (Number.isNaN(ts)) continue;
+    const daysAgo = Math.floor((now - ts) / msDay);
+    if (daysAgo < 0 || daysAgo >= 28) continue;
+    const idx = 3 - Math.floor(daysAgo / 7);
+    if (idx >= 0 && idx < 4) buckets[idx] += valueFn(r);
+  }
+  return buckets.map((value, i) => ({ week: `Week ${i + 1}`, value: Math.round(value * 10) / 10 }));
+}
+
+function learningProgressByEnrollment(
+  records,
+  enrollments,
+  dateField,
+  valueFn
+) {
+  if (!enrollments.length) return [];
+
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const MAX_DAYS = 28;
+
+  // Student's first enrollment date
+  const enrollmentDate = new Date(
+    Math.min(
+      ...enrollments.map((e) => new Date(e.enrolled_at).getTime())
+    )
+  );
+  enrollmentDate.setHours(0, 0, 0, 0);
+
+  // Today's date
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Days since enrollment
+  const elapsedDays = Math.min(
+    MAX_DAYS,
+    Math.max(
+      0,
+      Math.floor(
+        (today.getTime() - enrollmentDate.getTime()) / MS_PER_DAY
+      )
+    )
+  );
+
+  // Always build 29 points (Day0 -> Day28)
+  const dailyProgress = Array(MAX_DAYS + 1).fill(null);
+
+  // Starting point
+  dailyProgress[0] = 0;
+
+  // Count completed lessons on each day
+  for (const record of records) {
+    if (!record[dateField]) continue;
+
+    const completedDate = new Date(record[dateField]);
+    completedDate.setHours(0, 0, 0, 0);
+
+    const dayIndex = Math.floor(
+      (completedDate.getTime() - enrollmentDate.getTime()) /
+        MS_PER_DAY
+    );
+
+    if (dayIndex < 0 || dayIndex > elapsedDays) continue;
+
+    if (dailyProgress[dayIndex] === null) {
+      dailyProgress[dayIndex] = 0;
+    }
+
+    dailyProgress[dayIndex] += valueFn(record);
+  }
+
+  // Convert to cumulative values
+  for (let day = 1; day <= elapsedDays; day++) {
+    if (dailyProgress[day] === null) {
+      dailyProgress[day] = dailyProgress[day - 1];
+    } else {
+      dailyProgress[day] += dailyProgress[day - 1];
+    }
+  }
+
+  // Build chart data
+  return dailyProgress.map((value, day) => {
+    let week = "";
+
+    if (day === 0) week = "Week 0";
+    else if (day === 7) week = "Week 1";
+    else if (day === 14) week = "Week 2";
+    else if (day === 21) week = "Week 3";
+    else if (day === 28) week = "Week 4";
+
+    return {
+      day,
+      week,
+      value: day <= elapsedDays ? value : null,
+    };
+  });
+}
+
+/**
+ * A higher-order function to wrap Prisma queries for safe error handling.
+ * It catches Prisma's "Record Not Found" error (P2025) and returns null,
+ * while re-throwing any other errors.
+ * @param {Promise<T>} query - The Prisma query to execute.
+ * @returns {Promise<T|null>}
+ * @template T
+ */
+const safeQuery = async (query) => {
+  try {
+    return await query;
+  } catch (e) {
+    if (e.code === "P2025") return null;
+    throw e;
+  }
+};
 
 // User rows are always fetched with role + role.permissions included so we can
 // expose `role` (name) and `permissions[]` to callers.
@@ -12,12 +136,19 @@ const userInclude = {
 
 const mapUser = (u) =>
   u && {
-    id: u.id, name: u.name, email: u.email,
+    id: u.id,
+    name: u.name,
+    email: u.email,
     role_id: u.role_id,
     role: u.role?.name || null,
+
+    career_goal: u.career_goal,
+
     permissions: u.role?.permissions?.map((rp) => rp.permission.name) || [],
-    password_hash: u.password_hash, status: u.status,
-    last_login: iso(u.last_login), created_at: iso(u.created_at),
+    password_hash: u.password_hash,
+    status: u.status,
+    last_login: iso(u.last_login),
+    created_at: iso(u.created_at),
   };
 
 const mapAssessment = (a) => a && { ...a, date_taken: iso(a.date_taken) };
@@ -38,6 +169,7 @@ const mapAch = (a) => a && { ...a, earned_at: iso(a.earned_at) };
 const mapTask = (t) => t && { ...t, due_date: iso(t.due_date), created_at: iso(t.created_at) };
 const mapRec = (r) => r && { ...r, created_at: iso(r.created_at) };
 const mapAnn = (a) => a && { ...a, scheduled_at: iso(a.scheduled_at), created_at: iso(a.created_at) };
+
 
 module.exports = {
   prisma,
@@ -83,14 +215,9 @@ module.exports = {
         role_id = r.id;
       }
       const patch = role_id ? { ...rest, role_id } : rest;
-      try {
-        return mapUser(await prisma.user.update({
-          where: { id }, data: patch, include: userInclude,
-        }));
-      } catch (e) {
-        if (e.code === "P2025") return null;
-        throw e;
-      }
+      return mapUser(await safeQuery(prisma.user.update({
+        where: { id }, data: patch, include: userInclude,
+      })));
     },
     remove: async (id) => {
       try { await prisma.user.delete({ where: { id } }); return true; }
@@ -99,6 +226,79 @@ module.exports = {
     touchLogin: async (id) => {
       try { await prisma.user.update({ where: { id }, data: { last_login: new Date() } }); }
       catch (_) {}
+    },
+    async updatePassword(userId, password_hash) {
+      return prisma.user.update({
+        where: {
+          id: userId,
+        },
+        data: {
+          password_hash,
+        },
+      });
+    },
+  },
+
+  authOtps: {
+  async create(data) {
+    return prisma.authOtp.create({ data });
+  },
+
+  async findByUserId(userId) {
+    return prisma.authOtp.findUnique({
+      where: {
+        user_id: userId,
+      },
+    });
+  },
+
+  async deleteByUserId(userId) {
+    return prisma.authOtp.deleteMany({
+      where: {
+        user_id: userId,
+      },
+    });
+  },
+
+  verify: async (id) => {
+    return prisma.authOtp.update({
+      where: {
+        id,
+      },
+      data: {
+        verified_at: new Date(),
+      },
+    });
+  },
+  },
+
+  refreshTokens: {
+    create: async (data) => {
+      return prisma.refreshToken.create({ data });
+    },
+
+    findById: async (id) => {
+      return prisma.refreshToken.findUnique({
+        where: { id },
+      });
+    },
+
+    findByUserId: async (userId) => {
+      return prisma.refreshToken.findMany({
+        where: { user_id: userId },
+      });
+    },
+
+    delete: async (id) => {
+      return prisma.refreshToken.delete({
+        where: { id },
+      });
+    },
+
+    deleteByUserId: async (userId) => {
+      return prisma.refreshToken.deleteMany({
+        where: { user_id: userId },
+      });
     },
   },
 
@@ -137,12 +337,29 @@ module.exports = {
   gapReports: {
     findByUserId: async (user_id) => mapGap(await prisma.gapReport.findFirst({ where: { user_id } })),
     upsert: async (user_id, data) => {
-      const existing = await prisma.gapReport.findFirst({ where: { user_id } });
-      if (existing) return mapGap(await prisma.gapReport.update({ where: { id: existing.id }, data }));
-      return mapGap(await prisma.gapReport.create({
-        data: { ...data, user_id, readiness_score: data.readiness_score ?? 0 },
-      }));
-    },
+    const existing = await prisma.gapReport.findFirst({
+      where: { user_id },
+    });
+
+    if (existing) {
+      return mapGap(
+        await prisma.gapReport.update({
+          where: { id: existing.id },
+          data,
+        })
+      );
+    }
+
+    return mapGap(
+      await prisma.gapReport.create({
+        data: {
+          ...data,
+          user_id,
+          readiness_score: data.readiness_score ?? 0,
+        },
+      })
+    );
+  },
   },
 
   courses: {
@@ -157,13 +374,9 @@ module.exports = {
     findById: async (id) => mapCourse(await prisma.course.findUnique({ where: { id } })),
     create: async (data) => mapCourse(await prisma.course.create({ data })),
     update: async (id, data) => {
-      try { return mapCourse(await prisma.course.update({ where: { id }, data })); }
-      catch (e) { if (e.code === "P2025") return null; throw e; }
+      return mapCourse(await safeQuery(prisma.course.update({ where: { id }, data })));
     },
-    remove: async (id) => {
-      try { await prisma.course.delete({ where: { id } }); return true; }
-      catch (e) { if (e.code === "P2025") return false; throw e; }
-    },
+    remove: async (id) => !!(await safeQuery(prisma.course.delete({ where: { id } }))),
     enrollmentCount: async (id) => prisma.enrollment.count({ where: { course_id: id } }),
   },
 
@@ -184,13 +397,9 @@ module.exports = {
     findById: async (id) => mapJob(await prisma.job.findUnique({ where: { id } })),
     create: async (data) => mapJob(await prisma.job.create({ data })),
     update: async (id, data) => {
-      try { return mapJob(await prisma.job.update({ where: { id }, data })); }
-      catch (e) { if (e.code === "P2025") return null; throw e; }
+      return mapJob(await safeQuery(prisma.job.update({ where: { id }, data })));
     },
-    remove: async (id) => {
-      try { await prisma.job.delete({ where: { id } }); return true; }
-      catch (e) { if (e.code === "P2025") return false; throw e; }
-    },
+    remove: async (id) => !!(await safeQuery(prisma.job.delete({ where: { id } }))),
     listByEmployer: async (employer_id) =>
       (await prisma.job.findMany({ where: { employer_id } })).map(mapJob),
   },
@@ -212,9 +421,18 @@ module.exports = {
       (await prisma.notification.findMany({ where: { user_id } })).map(mapNotif),
     create: async (data) => mapNotif(await prisma.notification.create({ data })),
     markRead: async (id, user_id) => {
-      const n = await prisma.notification.findFirst({ where: { id, user_id } });
-      if (!n) return null;
-      return mapNotif(await prisma.notification.update({ where: { id }, data: { read_status: true } }));
+      const notification = await prisma.notification.findFirst({
+        where: { id, user_id },
+      });
+
+      if (!notification) return null;
+
+      return mapNotif(
+        await prisma.notification.update({
+          where: { id },
+          data: { read_status: true },
+        })
+      );
     },
   },
 
@@ -222,9 +440,27 @@ module.exports = {
     findByUserId: async (user_id) =>
       mapSub(await prisma.subscription.findFirst({ where: { user_id } })),
     upsert: async (user_id, data) => {
-      const existing = await prisma.subscription.findFirst({ where: { user_id } });
-      if (existing) return mapSub(await prisma.subscription.update({ where: { id: existing.id }, data }));
-      return mapSub(await prisma.subscription.create({ data: { ...data, user_id } }));
+      const existing = await prisma.subscription.findFirst({
+        where: { user_id },
+      });
+
+      if (existing) {
+        return mapSub(
+          await prisma.subscription.update({
+            where: { id: existing.id },
+            data,
+          })
+        );
+      }
+
+      return mapSub(
+        await prisma.subscription.create({
+          data: {
+            ...data,
+            user_id,
+          },
+        })
+      );
     },
   },
 
@@ -267,16 +503,15 @@ module.exports = {
       return map;
     },
     update: async (patch) => {
-      for (const [key, value] of Object.entries(patch || {})) {
-        await prisma.setting.upsert({
+      const updates = Object.entries(patch || {}).map(([key, value]) =>
+        prisma.setting.upsert({
           where: { scope_key: { scope: "system", key } },
           update: { value }, create: { scope: "system", key, value },
-        });
-      }
-      const rows = await prisma.setting.findMany({ where: { scope: "system" } });
-      const map = {};
-      for (const s of rows) map[s.key] = s.value;
-      return map;
+        })
+      );
+
+      await prisma.$transaction(updates);
+      return module.exports.settings.all(); // Reuse all() to return the updated map
     },
   },
 
@@ -306,11 +541,61 @@ module.exports = {
         watched_duration: 0, quiz_score: null, assignment_status: "pending",
         completion_flag: false, ...patch,
       };
-      return mapProgress(await prisma.progress.upsert({
-        where: { user_id_lesson_id: { user_id, lesson_id } },
-        update: patch,
-        create: { ...data, user_id, lesson_id },
-      }));
+      const updateData = { ...patch };
+
+      if ("completion_flag" in patch) {
+        updateData.completed_at = patch.completion_flag
+        ? new Date()
+        : null;
+}
+
+      const saved = await prisma.progress.upsert({
+          where: {
+              user_id_lesson_id: {
+                  user_id,
+                  lesson_id,
+              },
+          },
+
+          update: updateData,
+
+          create: {
+              ...data,
+              user_id,
+              lesson_id,
+              completed_at: data.completion_flag
+                  ? new Date()
+                  : null,
+          },
+      });
+
+      // Roll lesson-level progress up into the enrollment's completion_percentage,
+      // so dashboards/certificates reflect real course progress instead of staying
+      // at the 0 they're set to on enrollment.
+      const lesson = await prisma.lesson.findUnique({ where: { id: lesson_id } });
+      if (lesson) {
+        const totalLessons = await prisma.lesson.count({
+          where: { course_id: lesson.course_id },
+        });
+        if (totalLessons > 0) {
+          const completedCount = await prisma.progress.count({
+            where: {
+              user_id,
+              completion_flag: true,
+              lesson: { course_id: lesson.course_id },
+            },
+          });
+          const pct = Math.min(100, Math.round((completedCount / totalLessons) * 100));
+          await prisma.enrollment.updateMany({
+            where: { user_id, course_id: lesson.course_id },
+            data: pct >= 100
+              ? { completion_percentage: pct, status: "completed" }
+              : { completion_percentage: pct },
+          });
+        }
+      }
+
+      return mapProgress(saved);
     },
   },
 
@@ -319,7 +604,7 @@ module.exports = {
       (await prisma.certificate.findMany({ where: { user_id } })).map(mapCert),
     create: async (data) => mapCert(await prisma.certificate.create({
       data: {
-        certificate_code: "EDU-" + Math.random().toString(36).slice(2, 10).toUpperCase(),
+        certificate_code: `EDU-${crypto.randomBytes(4).toString("hex").toUpperCase()}`,
         ...data,
       },
     })),
@@ -339,16 +624,35 @@ module.exports = {
     },
     create: async (data) => mapTask(await prisma.task.create({ data })),
     update: async (id, user_id, data) => {
-      const t = await prisma.task.findFirst({ where: { id, user_id } });
-      if (!t) return null;
-      return mapTask(await prisma.task.update({ where: { id }, data }));
+      const task = await prisma.task.findFirst({
+        where: { id, user_id },
+      });
+
+      if (!task) return null;
+
+      return mapTask(
+        await prisma.task.update({
+          where: { id },
+          data,
+        })
+      );
     },
     remove: async (id, user_id) => {
-      const t = await prisma.task.findFirst({ where: { id, user_id } });
-      if (!t) return false;
-      await prisma.task.delete({ where: { id } });
-      return true;
-    },
+    const task = await prisma.task.findFirst({
+      where: {
+        id,
+        user_id,
+      },
+    });
+
+    if (!task) return false;
+
+    await prisma.task.delete({
+      where: { id },
+    });
+
+    return true;
+  },
   },
 
   recommendations: {
@@ -426,33 +730,168 @@ module.exports = {
   },
 
   studentDashboard: async (user_id) => {
-    const [enrollments, tasks, achievements, progress] = await Promise.all([
-      prisma.enrollment.findMany({ where: { user_id } }),
-      prisma.task.findMany({ where: { user_id } }),
-      prisma.achievement.findMany({ where: { user_id } }),
-      prisma.progress.findMany({ where: { user_id } }),
+    const [
+      user,
+      enrollments,
+      tasks,
+      achievements,
+      progress,
+      certificates,
+    ] = await Promise.all([
+
+      prisma.user.findUnique({
+      where: { id: user_id },
+      select: {
+        name: true,
+        career_goal: true,
+        },
+      }),
+
+      prisma.enrollment.findMany({
+        where: { user_id },
+        include: {
+          course: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+        },
+      }),
+
+      prisma.task.findMany({
+        where: { user_id },
+        include: {
+          course: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+        },
+      }),
+
+      prisma.achievement.findMany({
+        where: { user_id },
+      }),
+
+      prisma.progress.findMany({
+        where: { user_id },
+        include: {
+          lesson: {
+            select: {
+              id: true,
+              title: true,
+              course: {
+                select: {
+                  id: true,
+                  title: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+
+      prisma.certificate.findMany({
+        where: { user_id },
+        include: {
+          course: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+        },
+      }),
     ]);
-    const learningSeconds = progress.reduce((s, p) => s + (p.watched_duration || 0), 0);
-    const hoursLogged = Math.round(learningSeconds / 3600);
-    const skillsReadiness = enrollments.length === 0
-      ? 0
-      : Math.round(enrollments.reduce((s, e) => s + (e.completion_percentage || 0), 0) / enrollments.length);
+    const learningSeconds = progress.reduce(
+     (sum, record) => sum + (record.watched_duration || 0),0);
+
+    const learningHoursLogged = Math.round(learningSeconds / 3600);
+
+    const activeCourses = enrollments.filter(
+      (enrollment) => enrollment.status === "active"
+    ).length;
+
+    const skillsReadiness = enrollments.length > 0 ? Math.round(enrollments.reduce(
+                  (sum, enrollment) =>sum + (enrollment.completion_percentage || 0),0) 
+                  / enrollments.length): 0;
+    
+    const enrollmentActivities = enrollments.map((enrollment) => ({
+      id: enrollment.id,
+      title: `Enrolled in ${enrollment.course.title}`,
+      when: enrollment.enrolled_at,
+      type: "enrollment",
+    }));
+
+    const lessonActivities = progress.filter((record) => record.completion_flag)
+      .map((record) => ({
+        id: record.id,
+        title: `Completed lesson "${record.lesson.title}"`,
+        when: record.updated_at,
+        type: "lesson",
+      }));
+
+    const taskActivities = tasks
+      .filter((task) => task.status === "done")
+      .map((task) => ({
+        id: task.id,
+        title: `Completed task "${task.title}"`,
+        when: task.created_at,
+        type: "task",
+      }));
+
+    const achievementActivities = achievements.map((achievement) => ({
+      id: achievement.id,
+      title: `Earned "${achievement.badge_name}" badge`,
+      when: achievement.earned_at,
+      type: "achievement",
+    }));
+
+    const certificateActivities = certificates.map((certificate) => ({
+      id: certificate.id,
+      title: `Received certificate for ${certificate.course.title}`,
+      when: certificate.issued_date,
+      type: "certificate",
+    }));
+
+    const recentActivity = [
+      ...enrollmentActivities,
+      ...lessonActivities,
+      ...taskActivities,
+      ...achievementActivities,
+      ...certificateActivities,
+    ]
+      .sort((a, b) => new Date(b.when) - new Date(a.when))
+      .slice(0, 5);
+
     return {
-      coursesEnrolled: enrollments.length,
-      activeCourses: enrollments.length,
-      achievementsCount: achievements.length,
-      tasksDue: tasks.filter((t) => t.status === "pending").length,
-      learningHoursLogged: hoursLogged || 28,
-      skillsReadiness: skillsReadiness || 72,
-      learningProgress: [
-        { week: "Week 1", value: 20 }, { week: "Week 2", value: 60 },
-        { week: "Week 3", value: 55 }, { week: "Week 4", value: 85 },
-      ],
-      recentActivity: [
-        { id: "1", title: "Submitted Python Assignment", when: "2 hours ago" },
-        { id: "2", title: "Completed Soft Skills Quiz", when: "Yesterday" },
-        { id: "3", title: "Received Feedback on Project", when: "2 days ago" },
-      ],
+        studentName: user?.name,
+        careerGoal: user?.career_goal,
+        coursesEnrolled: enrollments.length,
+        activeCourses,
+        achievementsCount: achievements.length,
+        tasksDue: tasks.filter(task => task.status === "pending").length,
+        learningHoursLogged,
+        skillsReadiness,
+      // Weekly count of lessons completed — Dashboard's "Learning Progress" chart.
+      learningProgress: learningProgressByEnrollment(
+      progress.filter((p) => p.completed_at),
+      enrollments,
+      "completed_at",
+      () => 1
+      ),
+      // Weekly hours watched — Insights page's "Engagement Trends" chart.
+      // Note: watched_duration is the latest reported total for a lesson (not additive),
+      // so this reflects hours logged as of each lesson's most recent update, bucketed
+      // by week — a reasonable proxy for engagement without a full event log.
+      engagementTrends: weeklyBuckets(
+        progress,
+        "updated_at",
+        (p) => (p.watched_duration || 0) / 3600
+      ),
+      recentActivity,
     };
   },
 };
