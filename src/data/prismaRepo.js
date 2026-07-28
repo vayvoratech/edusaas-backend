@@ -319,19 +319,97 @@ module.exports = {
   },
 
   profiles: {
-    findByUserId: async (user_id) => prisma.profile.findUnique({ where: { user_id } }),
+    findByUserId: async (user_id) =>
+      prisma.profile.findUnique({
+        where: { user_id },
+      }),
+
     upsert: async (user_id, data) => {
       return prisma.profile.upsert({
-        where: { user_id }, update: data, create: { ...data, user_id },
+        where: { user_id },
+        update: data,
+        create: {
+          ...data,
+          user_id,
+        },
       });
     },
+
+    markInitialAssessmentCompleted: async (tx, user_id) =>
+      tx.profile.update({
+        where: {
+          user_id,
+        },
+        data: {
+          initial_assessment_completed: true,
+        },
+      }),
   },
 
   assessments: {
-    create: async (data) => mapAssessment(await prisma.assessment.create({ data })),
-    findById: async (id) => mapAssessment(await prisma.assessment.findUnique({ where: { id } })),
+    create: async (data) => {
+      const assessment = await prisma.$transaction(async (tx) => {
+        const createdAssessment = await tx.assessment.create({
+          data,
+        });
+
+        await tx.profile.update({
+          where: {
+            user_id: data.user_id,
+          },
+          data: {
+            initial_assessment_completed: true,
+          },
+        });
+
+        return createdAssessment;
+      });
+
+      return mapAssessment(assessment);
+    },
+
+    findById: async (id) =>
+      mapAssessment(
+        await prisma.assessment.findUnique({
+          where: { id },
+        })
+      ),
+
     listByUser: async (user_id) =>
-      (await prisma.assessment.findMany({ where: { user_id } })).map(mapAssessment),
+      (
+        await prisma.assessment.findMany({
+          where: { user_id },
+        })
+      ).map(mapAssessment),
+
+    findInitialByUser: (userId) =>
+      prisma.assessment.findFirst({
+        where: {
+          user_id: userId,
+          is_initial: true,
+        },
+      }),
+
+    createInitial: async (data) => {
+    const assessment = await prisma.$transaction(async (tx) => {
+      const createdAssessment = await tx.assessment.create({
+        data,
+      });
+
+      await tx.profile.update({
+        where: {
+          user_id: data.user_id,
+        },
+        data: {
+          initial_assessment_completed: true,
+        },
+      });
+
+      return createdAssessment;
+    });
+
+    return mapAssessment(assessment);
+    },
   },
 
   gapReports: {
@@ -671,6 +749,553 @@ module.exports = {
     create: async (data) => mapAnn(await prisma.announcement.create({ data })),
   },
 
+  domainRoles: {
+  list: async () =>
+    prisma.domainRole.findMany({
+      orderBy: {
+        domain_name: "asc",
+      },
+    }),
+
+  findById: async (id) =>
+    prisma.domainRole.findUnique({
+      where: {
+        id,
+      },
+      include: {
+        requiredSkills: {
+          include: {
+            skill: true,
+          },
+        },
+      },
+    }),
+
+  findByName: async (domain_name) =>
+    prisma.domainRole.findUnique({
+      where: {
+        domain_name,
+      },
+      include: {
+        requiredSkills: {
+          include: {
+            skill: true,
+          },
+        },
+      },
+    }),
+
+  create: async (data) =>
+    prisma.domainRole.create({
+      data,
+    }),
+
+  update: async (id, data) =>
+    safeQuery(
+      prisma.domainRole.update({
+        where: {
+          id,
+        },
+        data,
+      })
+    ),
+
+  remove: async (id) =>
+    !!(
+      await safeQuery(
+        prisma.domainRole.delete({
+          where: {
+            id,
+          },
+        })
+      )
+    ),
+  },
+  
+  skills: {
+  list: async () =>
+    prisma.skill.findMany({
+      orderBy: {
+        skill_name: "asc",
+      },
+    }),
+
+  findById: async (id) =>
+    prisma.skill.findUnique({
+      where: {
+        id,
+      },
+    }),
+
+  findByName: async (skill_name) =>
+    prisma.skill.findUnique({
+      where: {
+        skill_name,
+      },
+    }),
+
+  create: async (data) =>
+    prisma.skill.create({
+      data,
+    }),
+
+  update: async (id, data) =>
+    safeQuery(
+      prisma.skill.update({
+        where: {
+          id,
+        },
+        data,
+      })
+    ),
+
+  remove: async (id) =>
+    !!(
+      await safeQuery(
+        prisma.skill.delete({
+          where: {
+            id,
+          },
+        })
+      )
+    ),
+  },
+
+  domainRequiredSkills: {
+  list: async () =>
+    prisma.domainRequiredSkill.findMany({
+      include: {
+        domainRole: true,
+        skill: true,
+      },
+      orderBy: [
+        {
+          domain_role_id: "asc",
+        },
+        {
+          skill_id: "asc",
+        },
+      ],
+    }),
+
+  findById: async (id) =>
+    prisma.domainRequiredSkill.findUnique({
+      where: {
+        id,
+      },
+      include: {
+        domainRole: true,
+        skill: true,
+      },
+    }),
+
+  findByDomainRoleId: async (domainRoleId) =>
+    prisma.domainRequiredSkill.findMany({
+      where: {
+        domain_role_id: domainRoleId,
+      },
+      include: {
+        skill: true,
+      },
+      orderBy: {
+        required_level: "desc",
+      },
+    }),
+
+  create: async (data) =>
+    prisma.domainRequiredSkill.create({
+      data,
+    }),
+
+  update: async (id, data) =>
+    safeQuery(
+      prisma.domainRequiredSkill.update({
+        where: {
+          id,
+        },
+        data,
+      })
+    ),
+
+  remove: async (id) =>
+    !!(
+      await safeQuery(
+        prisma.domainRequiredSkill.delete({
+          where: {
+            id,
+          },
+        })
+      )
+    ),
+  },
+
+  difficultyLevels: {
+  list: async () =>
+    prisma.difficultyLevel.findMany({
+      orderBy: {
+        difficulty_order: "asc",
+      },
+    }),
+
+  findById: async (id) =>
+    prisma.difficultyLevel.findUnique({
+      where: {
+        id,
+      },
+    }),
+
+  findByName: async (difficulty_name) =>
+    prisma.difficultyLevel.findUnique({
+      where: {
+        difficulty_name,
+      },
+    }),
+
+  create: async (data) =>
+    prisma.difficultyLevel.create({
+      data,
+    }),
+
+  update: async (id, data) =>
+    safeQuery(
+      prisma.difficultyLevel.update({
+        where: {
+          id,
+        },
+        data,
+      })
+    ),
+
+  remove: async (id) =>
+    !!(
+      await safeQuery(
+        prisma.difficultyLevel.delete({
+          where: {
+            id,
+          },
+        })
+      )
+    ),
+  },
+
+  questions: {
+  list: async (filters = {}) => {
+    const where = {};
+
+    if (filters.skill_id !== undefined)
+      where.skill_id = filters.skill_id;
+
+    if (filters.difficulty_id !== undefined)
+      where.difficulty_id = filters.difficulty_id;
+
+    if (filters.is_active !== undefined)
+      where.is_active = filters.is_active;
+
+    return prisma.question.findMany({
+      where,
+      include: {
+        skill: true,
+        difficulty: true,
+      },
+      orderBy: [
+        {
+          skill_id: "asc",
+        },
+        {
+          difficulty_id: "asc",
+        },
+      ],
+    });
+  },
+
+  findById: async (id) =>
+    prisma.question.findUnique({
+      where: {
+        id,
+      },
+      include: {
+        skill: true,
+        difficulty: true,
+      },
+    }),
+
+  findBySkillId: async (skillId) =>
+    prisma.question.findMany({
+      where: {
+        skill_id: skillId,
+        is_active: true,
+      },
+      include: {
+        skill: true,
+        difficulty: true,
+      },
+      orderBy: [
+        {
+          difficulty_id: "asc",
+        },
+        {
+          id: "asc",
+        },
+      ],
+    }),
+
+  findBySkillIds: async (skillIds) =>
+    prisma.question.findMany({
+      where: {
+        skill_id: {
+          in: skillIds,
+        },
+        is_active: true,
+      },
+      include: {
+        skill: true,
+        difficulty: true,
+      },
+      orderBy: [
+        {
+          skill_id: "asc",
+        },
+        {
+          difficulty_id: "asc",
+        },
+      ],
+    }),
+
+  findBySkillAndDifficulty: async (skillId, difficultyId) =>
+    prisma.question.findMany({
+      where: {
+        skill_id: skillId,
+        difficulty_id: difficultyId,
+        is_active: true,
+      },
+      include: {
+        skill: true,
+        difficulty: true,
+      },
+      orderBy: {
+        id: "asc",
+      },
+    }),
+
+  create: async (data) =>
+    prisma.question.create({
+      data,
+    }),
+
+  createMany: async (data) =>
+    prisma.question.createMany({
+      data,
+    }),
+
+  update: async (id, data) =>
+    safeQuery(
+      prisma.question.update({
+        where: {
+          id,
+        },
+        data,
+      })
+    ),
+
+  remove: async (id) =>
+    !!(
+      await safeQuery(
+        prisma.question.delete({
+          where: {
+            id,
+          },
+        })
+      )
+    ),
+  },
+
+  quizSessions: {
+    list: async () =>
+      prisma.quizSession.findMany({
+        include: {
+          user: true,
+          domainRole: true,
+        },
+        orderBy: {
+          created_at: "desc",
+        },
+      }),
+
+    findById: async (id) =>
+      prisma.quizSession.findUnique({
+        where: { id },
+        include: {
+          user: true,
+          domainRole: true,
+          answers: true,
+          skillResults: true,
+        },
+      }),
+
+    findByUserId: async (userId) =>
+      prisma.quizSession.findMany({
+        where: {
+          user_id: userId,
+        },
+        include: {
+          domainRole: true,
+        },
+        orderBy: {
+          created_at: "desc",
+        },
+      }),
+
+    create: async (data) =>
+      prisma.quizSession.create({
+        data,
+      }),
+
+    update: async (id, data) =>
+      safeQuery(
+        prisma.quizSession.update({
+          where: { id },
+          data,
+        })
+      ),
+
+    remove: async (id) =>
+      !!(
+        await safeQuery(
+          prisma.quizSession.delete({
+            where: { id },
+          })
+        )
+      ),
+  },
+
+  studentAnswers: {
+  list: async () =>
+    prisma.studentAnswer.findMany({
+      include: {
+        session: true,
+        question: true,
+        skill: true,
+        difficulty: true,
+      },
+    }),
+
+  findById: async (id) =>
+    prisma.studentAnswer.findUnique({
+      where: { id },
+      include: {
+        session: true,
+        question: true,
+        skill: true,
+        difficulty: true,
+      },
+    }),
+
+  findBySessionId: async (sessionId) =>
+    prisma.studentAnswer.findMany({
+      where: {
+        session_id: sessionId,
+      },
+      include: {
+        question: true,
+        skill: true,
+        difficulty: true,
+      },
+      orderBy: {
+        answered_at: "asc",
+      },
+    }),
+
+  create: async (data) =>
+    prisma.studentAnswer.create({
+      data,
+    }),
+
+  createMany: async (data) =>
+    prisma.studentAnswer.createMany({
+      data,
+    }),
+
+  update: async (id, data) =>
+    safeQuery(
+      prisma.studentAnswer.update({
+        where: { id },
+        data,
+      })
+    ),
+
+  remove: async (id) =>
+    !!(
+      await safeQuery(
+        prisma.studentAnswer.delete({
+          where: { id },
+        })
+      )
+    ),
+  },
+
+  studentSkillResults: {
+  list: async () =>
+    prisma.studentSkillResult.findMany({
+      include: {
+        session: true,
+        skill: true,
+      },
+    }),
+
+  findById: async (id) =>
+    prisma.studentSkillResult.findUnique({
+      where: { id },
+      include: {
+        session: true,
+        skill: true,
+      },
+    }),
+
+  findBySessionId: async (sessionId) =>
+    prisma.studentSkillResult.findMany({
+      where: {
+        session_id: sessionId,
+      },
+      include: {
+        skill: true,
+      },
+      orderBy: {
+        skill_id: "asc",
+      },
+    }),
+
+  create: async (data) =>
+    prisma.studentSkillResult.create({
+      data,
+    }),
+
+  createMany: async (data) =>
+    prisma.studentSkillResult.createMany({
+      data,
+    }),
+
+  update: async (id, data) =>
+    safeQuery(
+      prisma.studentSkillResult.update({
+        where: { id },
+        data,
+      })
+    ),
+
+  remove: async (id) =>
+    !!(
+      await safeQuery(
+        prisma.studentSkillResult.delete({
+          where: { id },
+        })
+      )
+    ),
+  },
+
+
+
+
+
   insights: async () => {
     const [users, courses, enrollments, jobs, applications, assessments] = await Promise.all([
       prisma.user.count(), prisma.course.count(), prisma.enrollment.count(),
@@ -732,6 +1357,7 @@ module.exports = {
   studentDashboard: async (user_id) => {
     const [
       user,
+      initialAssessment,
       enrollments,
       tasks,
       achievements,
@@ -744,6 +1370,23 @@ module.exports = {
       select: {
         name: true,
         career_goal: true,
+        profile: {
+          select: {
+            initial_assessment_completed: true,
+            },
+          },
+        },
+      }),
+
+      prisma.assessment.findFirst({
+        where: {
+          user_id,
+          is_initial: true,
+        },
+        select: {
+          score : true,
+          completed: true,
+          answers: true
         },
       }),
 
@@ -867,31 +1510,38 @@ module.exports = {
       .slice(0, 5);
 
     return {
-        studentName: user?.name,
-        careerGoal: user?.career_goal,
-        coursesEnrolled: enrollments.length,
-        activeCourses,
-        achievementsCount: achievements.length,
-        tasksDue: tasks.filter(task => task.status === "pending").length,
-        learningHoursLogged,
-        skillsReadiness,
-      // Weekly count of lessons completed — Dashboard's "Learning Progress" chart.
-      learningProgress: learningProgressByEnrollment(
+    studentName: user?.name,
+    careerGoal: user?.career_goal,
+    assessmentCompleted:
+      initialAssessment?.completed ?? false,
+
+    readinessScore:
+      initialAssessment?.score ?? null,
+
+    skillBreakdown:
+     initialAssessment?.answers ?? {},
+
+    coursesEnrolled: enrollments.length,
+    activeCourses,
+    achievementsCount: achievements.length,
+    tasksDue: tasks.filter(task => task.status === "pending").length,
+    learningHoursLogged,
+    skillsReadiness,
+
+    learningProgress: learningProgressByEnrollment(
       progress.filter((p) => p.completed_at),
       enrollments,
       "completed_at",
       () => 1
-      ),
-      // Weekly hours watched — Insights page's "Engagement Trends" chart.
-      // Note: watched_duration is the latest reported total for a lesson (not additive),
-      // so this reflects hours logged as of each lesson's most recent update, bucketed
-      // by week — a reasonable proxy for engagement without a full event log.
-      engagementTrends: weeklyBuckets(
-        progress,
-        "updated_at",
-        (p) => (p.watched_duration || 0) / 3600
-      ),
-      recentActivity,
+    ),
+
+    engagementTrends: weeklyBuckets(
+      progress,
+      "updated_at",
+      (p) => (p.watched_duration || 0) / 3600
+    ),
+
+    recentActivity,
     };
-  },
+   },
 };

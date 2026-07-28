@@ -75,8 +75,19 @@ router.post("/register", async (req, res, next) => {
       email: email.trim().toLowerCase(),
       role,
       password_hash,
-      career_goal: role === "student" ? career_goal :null
+      career_goal: role === "student" ? career_goal : null,
     });
+
+    if (role === "student") {
+
+      await repo.profiles.upsert(user.id, {
+        career_goal,
+        institution: null,
+        company: null,
+        preferences: {},
+        initial_assessment_completed: false,
+      });
+    }
 
     // Generate Tokens
     const accessToken = generateAccessToken(user);
@@ -225,7 +236,6 @@ router.post("/login", async (req, res, next) => {
   }
 });
 
-
 router.post("/refresh", async (req, res, next) => {
   try {
     const { refreshToken } = req.body || {};
@@ -321,7 +331,6 @@ router.post("/refresh", async (req, res, next) => {
   }
 });
 
-
 router.post("/logout", authRequired, async (req, res, next) => {
   try {
     const { refreshToken } = req.body || {};
@@ -391,17 +400,13 @@ router.post("/forgot-password", async (req, res, next) => {
   try {
     const { email } = req.body || {};
 
-    // Validate email
     if (!email || !email.trim()) {
-      return res.status(400).json({
-        error: "Email is required.",
-      });
+      return res.status(400).json({ error: "Email is required." });
     }
 
-    // Find user
     const user = await repo.users.findByEmail(email.trim().toLowerCase());
 
-    // Prevent email enumeration
+    // Security: Prevent email enumeration
     if (!user) {
       return res.status(200).json({
         message: "If an account exists, an OTP has been sent.",
@@ -411,25 +416,27 @@ router.post("/forgot-password", async (req, res, next) => {
     // Remove any existing OTP
     await repo.authOtps.deleteByUserId(user.id);
 
-    // Generate 6-digit OTP
     const otp = generateOtp();
 
-    // Hash OTP
-    const otp_hash = await bcrypt.hash(otp, 10);
+    // OPTIMIZATION 1: Switch from Bcrypt to fast SHA-256 crypto hashing
+    const otp_hash = crypto.createHash('sha256').update(otp).digest('hex');
 
-    // OTP expires in 10 minutes
     const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Store OTP
+    // Store OTP in database
     await repo.authOtps.create({
       user_id: user.id,
       otp_hash,
       expires_at,
     });
 
-    // Send Email
-    await sendOtpEmail(user.email, otp);
+    // OPTIMIZATION 2: Remove 'await'. Fire email in background or push to queue.
+    sendOtpEmail(user.email, otp).catch(err => {
+      console.error("Background Email Error: ", err);
+      // Log it or send to error tracking system, but don't crash the app
+    });
 
+    // Instantly return success to user while email sends in background
     return res.status(200).json({
       message: "If an account exists, an OTP has been sent.",
     });
@@ -484,11 +491,12 @@ router.post("/verify-otp", async (req, res, next) => {
       });
     }
 
-    // Step 6: Compare OTP
-    const isValid = await bcrypt.compare(
-      otp,
-      otpRecord.otp_hash
-    );
+    // Step 6: REPLACED BCRYPT WITH SHA-256 COMPARE
+    // Convert the incoming string to a SHA-256 hex string
+    const incomingHash = crypto.createHash('sha256').update(otp.trim()).digest('hex');
+    
+    // Compare directly with database record string
+    const isValid = (incomingHash === otpRecord.otp_hash);
 
     if (!isValid) {
       return res.status(400).json({

@@ -14,7 +14,7 @@ model User {
   email         String         @unique
   role_id       String
   password_hash String
-  career_goal   String?        // <-- Add 
+  career_goal   String?        
   status        String         @default("active")
   last_login    DateTime?
   created_at    DateTime       @default(now())
@@ -37,6 +37,7 @@ model User {
   announcements   Announcement[]   @relation("EducatorAnnouncements")
   authOtps        AuthOtp[]
   refreshTokens   RefreshToken[]
+  quizSessions    QuizSession[]
 
   @@index([role_id])
   @@map("users")
@@ -89,7 +90,7 @@ model Profile {
   institution  String?
   company      String?
   preferences  Json?
-
+  initial_assessment_completed Boolean  @default(false)
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("profiles")
@@ -103,6 +104,13 @@ model Assessment {
   score      Float
   answers    Json?
   date_taken DateTime @default(now())
+  career_goal   String?
+  is_initial    Boolean   @default(false)
+  total_marks   Int?
+  obtained_marks Int?
+  completed     Boolean   @default(false)
+  started_at    DateTime?
+  completed_at  DateTime?
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -387,6 +395,7 @@ model Announcement {
   @@schema("education")
 }
 
+
 model AuthOtp {
   id          String   @id @default(uuid())
   user_id     String   @unique
@@ -415,5 +424,144 @@ model RefreshToken {
   @@index([expires_at])
 
   @@map("refresh_tokens")
+  @@schema("education")
+}
+
+model DomainRole {
+  id          Int      @id @default(autoincrement())
+  domain_name String   @unique
+  category    String?
+  created_at  DateTime @default(now())
+
+  requiredSkills DomainRequiredSkill[]
+  quizSessions  QuizSession[]
+
+  @@map("domain_roles")
+  @@schema("education")
+}
+
+model Skill {
+  id          Int      @id @default(autoincrement())
+  skill_name  String   @unique
+  category    String?
+  description String?
+  created_at  DateTime @default(now())
+
+  requiredForDomains DomainRequiredSkill[]
+  questions          Question[]
+  answers            StudentAnswer[]
+  skillResults       StudentSkillResult[]
+
+  @@map("skills")
+  @@schema("education")
+}
+
+model DomainRequiredSkill {
+  id             Int      @id @default(autoincrement())
+  domain_role_id Int
+  skill_id       Int
+  required_level Int
+  created_at     DateTime @default(now())
+
+  domainRole DomainRole @relation(fields: [domain_role_id], references: [id], onDelete: Cascade)
+  skill      Skill      @relation(fields: [skill_id], references: [id], onDelete: Cascade)
+
+  @@unique([domain_role_id, skill_id])
+
+  @@map("domain_required_skills")
+  @@schema("education")
+}
+
+model DifficultyLevel {
+  id               Int    @id @default(autoincrement())
+  difficulty_name  String @unique
+  difficulty_order Int    @unique
+
+  questions Question[]
+  answers   StudentAnswer[]
+
+  @@map("difficulty_levels")
+  @@schema("education")
+}
+
+model Question {
+  id             Int      @id @default(autoincrement())
+  skill_id       Int
+  difficulty_id  Int
+  question_text  String
+  option_a       String
+  option_b       String
+  option_c       String
+  option_d       String
+  correct_option String
+  marks          Int      @default(1)
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now())
+
+  skill      Skill           @relation(fields: [skill_id], references: [id])
+  difficulty DifficultyLevel @relation(fields: [difficulty_id], references: [id])
+
+  answers StudentAnswer[]
+
+  @@map("questions")
+  @@schema("education")
+}
+
+model QuizSession {
+  id                  Int      @id @default(autoincrement())
+  user_id             String   @db.Uuid
+  domain_role_id      Int
+  start_time          DateTime @default(now())
+  end_time            DateTime?
+  status              String   @default("In Progress")
+  total_questions     Int      @default(50)
+  questions_answered  Int      @default(0)
+  created_at          DateTime @default(now())
+
+  user       User       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  domainRole DomainRole @relation(fields: [domain_role_id], references: [id], onDelete: Restrict)
+
+  answers      StudentAnswer[]
+  skillResults StudentSkillResult[]
+
+  @@map("quiz_sessions")
+  @@schema("education")
+}
+
+model StudentAnswer {
+  id               Int      @id @default(autoincrement())
+  session_id       Int
+  skill_id         Int
+  question_id      Int
+  difficulty_id    Int
+  selected_option  String
+  correct_option   String
+  is_correct       Boolean
+  marks_awarded    Int      @default(0)
+  answered_at      DateTime @default(now())
+
+  session    QuizSession     @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  skill      Skill           @relation(fields: [skill_id], references: [id], onDelete: Restrict)
+  question   Question        @relation(fields: [question_id], references: [id], onDelete: Restrict)
+  difficulty DifficultyLevel @relation(fields: [difficulty_id], references: [id], onDelete: Restrict)
+
+  @@map("student_answers")
+  @@schema("education")
+}
+
+model StudentSkillResult {
+  id              Int      @id @default(autoincrement())
+  session_id      Int
+  skill_id        Int
+  obtained_score  Int
+  maximum_score   Int
+  percentage      Decimal  @db.Decimal(5, 2)
+  skill_level     Int
+  created_at      DateTime @default(now())
+
+  session QuizSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  skill   Skill       @relation(fields: [skill_id], references: [id], onDelete: Restrict)
+
+  @@map("student_skill_results")
   @@schema("education")
 }
