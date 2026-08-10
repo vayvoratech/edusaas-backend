@@ -9,74 +9,76 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(uuid())
-  name          String
-  email         String         @unique
-  role_id       String
-  password_hash String
-  career_goal   String?        
-  status        String         @default("active")
-  last_login    DateTime?
-  created_at    DateTime       @default(now())
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String                @db.VarChar(255)
+  email               String                @unique @db.VarChar(255)
+  role_id             String                @db.Uuid
+  password_hash       String
+  status              String                @default("active") @db.VarChar(50)
+  last_login          DateTime?             @db.Timestamp(6)
+  created_at          DateTime              @default(now()) @db.Timestamp(6)
+  domain_role_id      String?               @db.Uuid
+  achievements        Achievement[]
+  announcements       Announcement[]        @relation("EducatorAnnouncements")
+  applications        Application[]
+  assessments         Assessment[]
+  authOtps            AuthOtp?
+  certificates        Certificate[]
+  community_bookmarks community_bookmarks[]
+  community_comments  community_comments[]
+  community_posts     community_posts[]
+  community_reactions community_reactions[]
+  taughtCourses       Course[]              @relation("EducatorCourses")
+  enrollments         Enrollment[]
+  gapReports          GapReport[]
+  jobs                Job[]                 @relation("EmployerJobs")
+  notifications       Notification[]
+  profile             Profile?
+  progress            Progress[]
+  quizSessions        QuizSession[]
+  recommendations     Recommendation[]
+  refreshTokens       RefreshToken[]
+  subscriptions       Subscription[]
+  tasks               Task[]
+  role                Role                  @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_users_role")
+  domainRole          DomainRole?           @relation(fields: [domain_role_id], references: [domain_role_id])
 
-  role            Role             @relation(fields: [role_id], references: [id])
-  profile         Profile?
-  assessments     Assessment[]
-  gapReports      GapReport[]
-  enrollments     Enrollment[]
-  jobs            Job[]            @relation("EmployerJobs")
-  applications    Application[]
-  notifications   Notification[]
-  subscriptions   Subscription[]
-  taughtCourses   Course[]         @relation("EducatorCourses")
-  progress        Progress[]
-  certificates    Certificate[]
-  achievements    Achievement[]
-  tasks           Task[]
-  recommendations Recommendation[]
-  announcements   Announcement[]   @relation("EducatorAnnouncements")
-  authOtps        AuthOtp[]
-  refreshTokens   RefreshToken[]
-  quizSessions    QuizSession[]
-
-  @@index([role_id])
+  @@index([role_id], map: "idx_users_role")
+  @@index([domain_role_id])
   @@map("users")
   @@schema("education")
 }
 
 model Role {
-  id          String           @id @default(uuid())
-  name        String           @unique // student | educator | employer | admin
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String           @unique @db.VarChar(100)
   description String?
-  created_at  DateTime         @default(now())
-
-  users       User[]
+  created_at  DateTime         @default(now()) @db.Timestamp(6)
   permissions RolePermission[]
+  users       User[]
 
   @@map("roles")
   @@schema("education")
 }
 
 model Permission {
-  id          String           @id @default(uuid())
-  name        String           @unique // e.g. "courses:create"
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String           @unique @db.VarChar(150)
   description String?
-  category    String?          // grouping (e.g. "Courses", "Admin")
-  created_at  DateTime         @default(now())
-
-  roles RolePermission[]
+  category    String?          @db.VarChar(100)
+  created_at  DateTime         @default(now()) @db.Timestamp(6)
+  roles       RolePermission[]
 
   @@map("permissions")
   @@schema("education")
 }
 
 model RolePermission {
-  role_id       String
-  permission_id String
-  assigned_at   DateTime @default(now())
-
-  role       Role       @relation(fields: [role_id], references: [id], onDelete: Cascade)
-  permission Permission @relation(fields: [permission_id], references: [id], onDelete: Cascade)
+  role_id       String     @db.Uuid
+  permission_id String     @db.Uuid
+  assigned_at   DateTime   @default(now()) @db.Timestamp(6)
+  permission    Permission @relation(fields: [permission_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_rolepermission_permission")
+  role          Role       @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_rolepermission_role")
 
   @@id([role_id, permission_id])
   @@map("role_permissions")
@@ -84,371 +86,372 @@ model RolePermission {
 }
 
 model Profile {
-  id           String  @id @default(uuid())
-  user_id      String  @unique
-  career_goal  String?
-  institution  String?
-  company      String?
-  preferences  Json?
-  initial_assessment_completed Boolean  @default(false)
-  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id                           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id                      String  @unique @db.Uuid
+  career_goal                  String?
+  institution                  String?
+  company                      String?
+  preferences                  Json?
+  initial_assessment_completed Boolean @default(false)
+  user                         User    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_profile_user")
 
   @@map("profiles")
   @@schema("education")
 }
 
 model Assessment {
-  id         String   @id @default(uuid())
-  user_id    String
-  type       String
-  score      Float
-  answers    Json?
-  date_taken DateTime @default(now())
-  career_goal   String?
-  is_initial    Boolean   @default(false)
-  total_marks   Int?
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String    @db.Uuid
+  type           String    @db.VarChar(100)
+  score          Float
+  answers        Json?
+  date_taken     DateTime  @default(now()) @db.Timestamp(6)
+  career_goal    String?
+  is_initial     Boolean   @default(false)
+  total_marks    Int?
   obtained_marks Int?
-  completed     Boolean   @default(false)
-  started_at    DateTime?
-  completed_at  DateTime?
+  completed      Boolean   @default(false)
+  started_at     DateTime? @db.Timestamp(6)
+  completed_at   DateTime? @db.Timestamp(6)
+  user           User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_assessment_user")
 
-  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
+  @@index([user_id], map: "idx_assessment_user")
   @@map("assessments")
   @@schema("education")
 }
 
 model GapReport {
-  id               String   @id @default(uuid())
-  user_id          String
-  readiness_score  Float
-  missing_skills   String[]
-  recommendations  Json?
-  created_at       DateTime @default(now())
-  updated_at       DateTime @updatedAt
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String   @db.Uuid
+  readiness_score Float
+  missing_skills  String[]
+  recommendations Json?
+  created_at      DateTime @default(now()) @db.Timestamp(6)
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamp(6)
+  user            User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_gapreport_user")
 
-  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
+  @@index([user_id], map: "idx_gapreport_user")
   @@map("gap_reports")
   @@schema("education")
 }
 
 model Course {
-  id          String   @id @default(uuid())
-  title       String
-  description String?
-  provider    String?
-  category    String?
-  difficulty  String?  // beginner | intermediate | advanced
-  status      String   @default("active") // active | draft | archived
-  educator_id String?
-  created_at  DateTime @default(now())
-
-  educator        User?            @relation("EducatorCourses", fields: [educator_id], references: [id], onDelete: SetNull)
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title           String           @db.VarChar(255)
+  description     String?
+  provider        String?          @db.VarChar(255)
+  category        String?          @db.VarChar(255)
+  difficulty      String?          @db.VarChar(50)
+  status          String           @default("active") @db.VarChar(50)
+  educator_id     String?          @db.Uuid
+  created_at      DateTime         @default(now()) @db.Timestamp(6)
+  certificates    Certificate[]
+  educator        User?            @relation("EducatorCourses", fields: [educator_id], references: [id], onUpdate: NoAction, map: "fk_course_educator")
   enrollments     Enrollment[]
   lessons         Lesson[]
-  certificates    Certificate[]
-  tasks           Task[]
   recommendations Recommendation[]
+  tasks           Task[]
 
+  @@index([educator_id], map: "idx_courses_educator")
   @@map("courses")
   @@schema("education")
 }
 
 model Enrollment {
-  id                    String   @id @default(uuid())
-  user_id               String
-  course_id             String
-  status                String   @default("active")
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id               String   @db.Uuid
+  course_id             String   @db.Uuid
+  status                String   @default("active") @db.VarChar(50)
   completion_percentage Float    @default(0)
-  enrolled_at           DateTime @default(now())
+  enrolled_at           DateTime @default(now()) @db.Timestamp(6)
+  course                Course   @relation(fields: [course_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_enrollment_course")
+  user                  User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_enrollment_user")
 
-  user   User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  course Course @relation(fields: [course_id], references: [id], onDelete: Cascade)
-
-  @@unique([user_id, course_id])
+  @@unique([user_id, course_id], map: "uq_enrollment")
+  @@index([course_id], map: "idx_enrollment_course")
+  @@index([user_id], map: "idx_enrollment_user")
   @@map("enrollments")
   @@schema("education")
 }
 
 model Job {
-  id              String   @id @default(uuid())
-  employer_id     String
-  title           String
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employer_id     String        @db.Uuid
+  title           String        @db.VarChar(255)
   description     String?
   requirements    String?
   required_skills String[]
-  status          String   @default("open")
-  created_at      DateTime @default(now())
+  status          String        @default("open") @db.VarChar(50)
+  created_at      DateTime      @default(now()) @db.Timestamp(6)
+  applications    Application[]
+  employer        User          @relation("EmployerJobs", fields: [employer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_job_employer")
 
-  employer     User          @relation("EmployerJobs", fields: [employer_id], references: [id], onDelete: Cascade)
-  applications Application[]
-
+  @@index([employer_id], map: "idx_jobs_employer")
   @@map("jobs")
   @@schema("education")
 }
 
 model Application {
-  id          String   @id @default(uuid())
-  job_id      String
-  student_id  String
-  status      String   @default("submitted")
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  job_id      String   @db.Uuid
+  student_id  String   @db.Uuid
+  status      String   @default("submitted") @db.VarChar(50)
   skill_match Float?
-  applied_at  DateTime @default(now())
+  applied_at  DateTime @default(now()) @db.Timestamp(6)
+  job         Job      @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_job")
+  student     User     @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_student")
 
-  job     Job  @relation(fields: [job_id], references: [id], onDelete: Cascade)
-  student User @relation(fields: [student_id], references: [id], onDelete: Cascade)
-
-  @@unique([job_id, student_id])
+  @@unique([job_id, student_id], map: "uq_application")
+  @@index([job_id], map: "idx_application_job")
+  @@index([student_id], map: "idx_application_student")
   @@map("applications")
   @@schema("education")
 }
 
 model Notification {
-  id          String   @id @default(uuid())
-  user_id     String
-  type        String
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String   @db.Uuid
+  type        String   @db.VarChar(100)
   message     String
   read_status Boolean  @default(false)
-  created_at  DateTime @default(now())
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+  user        User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_user")
 
-  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
+  @@index([user_id], map: "idx_notification_user")
   @@map("notifications")
   @@schema("education")
 }
 
 model Subscription {
-  id         String   @id @default(uuid())
-  user_id    String
-  plan_type  String
-  start_date DateTime
-  end_date   DateTime
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String   @db.Uuid
+  plan_type  String   @db.VarChar(100)
+  start_date DateTime @db.Timestamp(6)
+  end_date   DateTime @db.Timestamp(6)
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_subscription_user")
 
-  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
+  @@index([user_id], map: "idx_subscription_user")
   @@map("subscriptions")
   @@schema("education")
 }
 
 model Report {
-  id          String   @id @default(uuid())
-  title       String
-  type        String   // enrollment | assessment | activity | satisfaction | custom
-  generated_at DateTime @default(now())
-  exported_at DateTime?
-  format      String?  // pdf | csv
-  payload     Json?
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title        String    @db.VarChar(255)
+  type         String    @db.VarChar(100)
+  generated_at DateTime  @default(now()) @db.Timestamp(6)
+  exported_at  DateTime? @db.Timestamp(6)
+  format       String?   @db.VarChar(50)
+  payload      Json?
 
   @@map("reports")
   @@schema("education")
 }
 
 model Setting {
-  id     String @id @default(uuid())
-  scope  String @default("system")  // system | tenant | user
-  key    String
-  value  Json
+  id    String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope String @default("system") @db.VarChar(100)
+  key   String @db.VarChar(255)
+  value Json
 
-  @@unique([scope, key])
+  @@unique([scope, key], map: "uq_settings")
   @@map("settings")
   @@schema("education")
 }
 
 model Lesson {
-  id          String   @id @default(uuid())
-  course_id   String
-  title       String
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  course_id   String       @db.Uuid
+  title       String       @db.VarChar(255)
   video_url   String?
-  duration    Int?     // minutes
-  order_index Int      @default(0)
-  created_at  DateTime @default(now())
-
-  course      Course       @relation(fields: [course_id], references: [id], onDelete: Cascade)
-  quizzes     Quiz[]
+  duration    Int?
+  order_index Int          @default(0)
+  created_at  DateTime     @default(now()) @db.Timestamp(6)
   assignments Assignment[]
+  course      Course       @relation(fields: [course_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_lesson_course")
   progress    Progress[]
+  quizzes     Quiz[]
 
+  @@index([course_id], map: "idx_lessons_course")
   @@map("lessons")
   @@schema("education")
 }
 
 model Quiz {
-  id            String @id @default(uuid())
-  lesson_id     String
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lesson_id     String @db.Uuid
   questions     Json
   passing_score Int    @default(60)
+  lesson        Lesson @relation(fields: [lesson_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_quiz_lesson")
 
-  lesson Lesson @relation(fields: [lesson_id], references: [id], onDelete: Cascade)
-
+  @@index([lesson_id], map: "idx_quizzes_lesson")
   @@map("quizzes")
   @@schema("education")
 }
 
 model Assignment {
-  id              String   @id @default(uuid())
-  lesson_id       String
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lesson_id       String   @db.Uuid
   instructions    String?
   submission_link String?
-  created_at      DateTime @default(now())
+  created_at      DateTime @default(now()) @db.Timestamp(6)
+  lesson          Lesson   @relation(fields: [lesson_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_assignment_lesson")
 
-  lesson Lesson @relation(fields: [lesson_id], references: [id], onDelete: Cascade)
-
+  @@index([lesson_id], map: "idx_assignments_lesson")
   @@map("assignments")
   @@schema("education")
 }
 
 model Progress {
-  id                String   @id @default(uuid())
-  user_id           String
-  lesson_id         String
-  watched_duration  Int      @default(0)
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id           String    @db.Uuid
+  lesson_id         String    @db.Uuid
+  watched_duration  Int       @default(0)
   quiz_score        Int?
-  assignment_status String   @default("pending")
-  completion_flag   Boolean  @default(false)
+  assignment_status String    @default("pending") @db.VarChar(50)
+  completion_flag   Boolean   @default(false)
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamp(6)
+  completed_at      DateTime? @db.Timestamp(6)
+  lesson            Lesson    @relation(fields: [lesson_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_progress_lesson")
+  user              User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_progress_user")
 
-  completed_at      DateTime?
-
-  updated_at        DateTime @updatedAt
-
-  user   User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  lesson Lesson @relation(fields: [lesson_id], references: [id], onDelete: Cascade)
-
-  @@unique([user_id, lesson_id])
+  @@unique([user_id, lesson_id], map: "uq_progress")
+  @@index([lesson_id], map: "idx_progress_lesson")
+  @@index([user_id], map: "idx_progress_user")
   @@map("progress")
   @@schema("education")
 }
 
 model Certificate {
-  id               String   @id @default(uuid())
-  user_id          String
-  course_id        String
-  certificate_code String   @unique
-  issued_date      DateTime @default(now())
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String        @db.Uuid
+  course_id        String        @db.Uuid
+  certificate_code String        @unique @db.VarChar(255)
+  issued_date      DateTime      @default(now()) @db.Timestamp(6)
+  achievements     Achievement[]
+  course           Course        @relation(fields: [course_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_certificate_course")
+  user             User          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_certificate_user")
 
-  user         User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  course       Course        @relation(fields: [course_id], references: [id], onDelete: Cascade)
-  achievements Achievement[]
-
+  @@index([course_id], map: "idx_certificates_course")
+  @@index([user_id], map: "idx_certificates_user")
   @@map("certificates")
   @@schema("education")
 }
 
 model Achievement {
-  id             String   @id @default(uuid())
-  user_id        String
-  badge_name     String
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String       @db.Uuid
+  badge_name     String       @db.VarChar(255)
   milestone      String?
-  certificate_id String?
-  earned_at      DateTime @default(now())
+  certificate_id String?      @db.Uuid
+  earned_at      DateTime     @default(now()) @db.Timestamp(6)
+  certificate    Certificate? @relation(fields: [certificate_id], references: [id], onUpdate: NoAction, map: "fk_achievement_certificate")
+  user           User         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_achievement_user")
 
-  user        User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  certificate Certificate? @relation(fields: [certificate_id], references: [id], onDelete: SetNull)
-
+  @@index([certificate_id], map: "idx_achievements_certificate")
+  @@index([user_id], map: "idx_achievements_user")
   @@map("achievements")
   @@schema("education")
 }
 
 model Task {
-  id        String    @id @default(uuid())
-  user_id   String
-  course_id String?
-  title     String
-  due_date  DateTime?
-  status    String    @default("pending") // pending | done
-  created_at DateTime  @default(now())
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id      String    @db.Uuid
+  course_id    String?   @db.Uuid
+  title        String    @db.VarChar(255)
+  due_date     DateTime? @db.Timestamp(6)
+  status       String    @default("pending") @db.VarChar(50)
+  created_at   DateTime  @default(now()) @db.Timestamp(6)
+  completed_at DateTime?
+  course       Course?   @relation(fields: [course_id], references: [id], onUpdate: NoAction, map: "fk_task_course")
+  user         User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_task_user")
 
-  user   User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  course Course? @relation(fields: [course_id], references: [id], onDelete: SetNull)
-
+  @@index([course_id], map: "idx_tasks_course")
+  @@index([user_id], map: "idx_tasks_user")
   @@map("tasks")
   @@schema("education")
 }
 
 model Recommendation {
-  id         String   @id @default(uuid())
-  user_id    String
-  course_id  String
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String   @db.Uuid
+  course_id  String   @db.Uuid
   reason     String?
-  created_at DateTime @default(now())
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  course     Course   @relation(fields: [course_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_recommendation_course")
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_recommendation_user")
 
-  user   User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  course Course @relation(fields: [course_id], references: [id], onDelete: Cascade)
-
+  @@index([course_id], map: "idx_recommendations_course")
+  @@index([user_id], map: "idx_recommendations_user")
   @@map("recommendations")
   @@schema("education")
 }
 
 model Announcement {
-  id            String    @id @default(uuid())
-  educator_id   String
-  title         String
-  message       String
-  audience      String    @default("all") // all | course | educators
-  scheduled_at  DateTime?
-  attachment    String?
-  created_at    DateTime  @default(now())
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  educator_id  String    @db.Uuid
+  title        String    @db.VarChar(255)
+  message      String
+  audience     String    @default("all") @db.VarChar(100)
+  scheduled_at DateTime? @db.Timestamp(6)
+  attachment   String?
+  created_at   DateTime  @default(now()) @db.Timestamp(6)
+  educator     User      @relation("EducatorAnnouncements", fields: [educator_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_announcement_educator")
 
-  educator User @relation("EducatorAnnouncements", fields: [educator_id], references: [id], onDelete: Cascade)
-
+  @@index([educator_id], map: "idx_announcements_educator")
   @@map("announcements")
   @@schema("education")
 }
 
-
 model AuthOtp {
-  id          String   @id @default(uuid())
-  user_id     String   @unique
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String    @unique(map: "uq_auth_otps_user_id") @db.Uuid
   otp_hash    String
-  expires_at  DateTime
-  verified_at DateTime?
-  created_at  DateTime @default(now())
+  expires_at  DateTime  @db.Timestamp(6)
+  created_at  DateTime  @default(now()) @db.Timestamp(6)
+  verified_at DateTime? @db.Timestamp(6)
+  user        User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_auth_otps_user")
 
-  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@index([user_id])
   @@map("auth_otps")
   @@schema("education")
 }
 
 model RefreshToken {
-  id          String   @id @default(uuid())
-  user_id     String
-  token_hash  String
-  expires_at  DateTime
-  created_at  DateTime @default(now())
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String   @db.Uuid
+  token_hash String
+  expires_at DateTime @db.Timestamp(6)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_refresh_tokens_user")
 
-  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@index([user_id])
-  @@index([expires_at])
-
+  @@index([expires_at], map: "idx_refresh_tokens_expires")
+  @@index([user_id], map: "idx_refresh_tokens_user")
   @@map("refresh_tokens")
   @@schema("education")
 }
 
 model DomainRole {
-  id          Int      @id @default(autoincrement())
-  domain_name String   @unique
-  category    String?
-  created_at  DateTime @default(now())
-
+  domain_role_id String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  domain_name    String                @unique @db.VarChar(100)
+  category       String?               @db.VarChar(50)
+  created_at     DateTime?             @default(now()) @db.Timestamp(6)
   requiredSkills DomainRequiredSkill[]
-  quizSessions  QuizSession[]
+  quizSessions   QuizSession[]
+  users          User[]
 
   @@map("domain_roles")
   @@schema("education")
 }
 
 model Skill {
-  id          Int      @id @default(autoincrement())
-  skill_name  String   @unique
-  category    String?
-  description String?
-  created_at  DateTime @default(now())
-
+  skill_id           Int                   @id @default(autoincrement())
+  skill_name         String                @unique @db.VarChar(100)
+  category           String?               @db.VarChar(50)
+  description        String?
+  created_at         DateTime?             @default(now()) @db.Timestamp(6)
   requiredForDomains DomainRequiredSkill[]
   questions          Question[]
+  quiz_state         quiz_state[]
   answers            StudentAnswer[]
   skillResults       StudentSkillResult[]
 
@@ -457,35 +460,31 @@ model Skill {
 }
 
 model DomainRequiredSkill {
-  id             Int      @id @default(autoincrement())
-  domain_role_id Int
-  skill_id       Int
-  required_level Int
-  created_at     DateTime @default(now())
-
-  domainRole DomainRole @relation(fields: [domain_role_id], references: [id], onDelete: Cascade)
-  skill      Skill      @relation(fields: [skill_id], references: [id], onDelete: Cascade)
+  domain_required_skill_id Int        @id @default(autoincrement())
+  domain_role_id           String     @db.Uuid
+  skill_id                 Int
+  required_level           Int        @db.SmallInt
+  domainRole               DomainRole @relation(fields: [domain_role_id], references: [domain_role_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_domain_role")
+  skill                    Skill      @relation(fields: [skill_id], references: [skill_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_skill")
 
   @@unique([domain_role_id, skill_id])
-
   @@map("domain_required_skills")
   @@schema("education")
 }
 
 model DifficultyLevel {
-  id               Int    @id @default(autoincrement())
-  difficulty_name  String @unique
-  difficulty_order Int    @unique
-
-  questions Question[]
-  answers   StudentAnswer[]
+  difficulty_id    Int             @id @default(autoincrement())
+  difficulty_name  String          @unique @db.VarChar(20)
+  difficulty_order Int             @unique
+  questions        Question[]
+  answers          StudentAnswer[]
 
   @@map("difficulty_levels")
   @@schema("education")
 }
 
 model Question {
-  id             Int      @id @default(autoincrement())
+  question_id    Int             @id @default(autoincrement())
   skill_id       Int
   difficulty_id  Int
   question_text  String
@@ -493,75 +492,251 @@ model Question {
   option_b       String
   option_c       String
   option_d       String
-  correct_option String
-  marks          Int      @default(1)
-  is_active      Boolean  @default(true)
-  created_at     DateTime @default(now())
-
-  skill      Skill           @relation(fields: [skill_id], references: [id])
-  difficulty DifficultyLevel @relation(fields: [difficulty_id], references: [id])
-
-  answers StudentAnswer[]
+  correct_option String          @db.Char(1)
+  marks          Int?            @default(1)
+  is_active      Boolean?        @default(true)
+  created_at     DateTime?       @default(now()) @db.Timestamp(6)
+  difficulty     DifficultyLevel @relation(fields: [difficulty_id], references: [difficulty_id], onDelete: NoAction, onUpdate: NoAction)
+  skill          Skill           @relation(fields: [skill_id], references: [skill_id], onDelete: NoAction, onUpdate: NoAction)
+  answers        StudentAnswer[]
 
   @@map("questions")
   @@schema("education")
 }
 
 model QuizSession {
-  id                  Int      @id @default(autoincrement())
-  user_id             String   @db.Uuid
-  domain_role_id      Int
-  start_time          DateTime @default(now())
-  end_time            DateTime?
-  status              String   @default("In Progress")
-  total_questions     Int      @default(50)
-  questions_answered  Int      @default(0)
-  created_at          DateTime @default(now())
+  session_id         Int                  @id @default(autoincrement())
+  user_id            String               @db.Uuid
+  domain_role_id     String               @db.Uuid
+  start_time         DateTime             @default(now()) @db.Timestamp(6)
+  end_time           DateTime?            @db.Timestamp(6)
+  status             String               @default("In Progress") @db.VarChar(20)
+  total_questions    Int                  @default(50)
+  questions_answered Int                  @default(0)
+  current_skill_id   Int?
+  domainRole         DomainRole           @relation(fields: [domain_role_id], references: [domain_role_id], onUpdate: NoAction)
+  user               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  quiz_state         quiz_state[]
+  answers            StudentAnswer[]
+  skillResults       StudentSkillResult[]
 
-  user       User       @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  domainRole DomainRole @relation(fields: [domain_role_id], references: [id], onDelete: Restrict)
-
-  answers      StudentAnswer[]
-  skillResults StudentSkillResult[]
-
+  @@index([current_skill_id], map: "idx_quiz_sessions_current_skill")
+  @@index([domain_role_id], map: "idx_quiz_sessions_domain_role")
+  @@index([status], map: "idx_quiz_sessions_status")
+  @@index([user_id], map: "idx_quiz_sessions_user")
   @@map("quiz_sessions")
   @@schema("education")
 }
 
 model StudentAnswer {
-  id               Int      @id @default(autoincrement())
-  session_id       Int
-  skill_id         Int
-  question_id      Int
-  difficulty_id    Int
-  selected_option  String
-  correct_option   String
-  is_correct       Boolean
-  marks_awarded    Int      @default(0)
-  answered_at      DateTime @default(now())
+  answer_id       Int             @id @default(autoincrement())
+  session_id      Int
+  skill_id        Int
+  question_id     Int
+  difficulty_id   Int
+  selected_option String          @db.Char(1)
+  correct_option  String          @db.Char(1)
+  is_correct      Boolean
+  marks_awarded   Int             @default(0)
+  answered_at     DateTime        @default(now()) @db.Timestamp(6)
+  difficulty      DifficultyLevel @relation(fields: [difficulty_id], references: [difficulty_id], onUpdate: NoAction)
+  question        Question        @relation(fields: [question_id], references: [question_id], onUpdate: NoAction)
+  session         QuizSession     @relation(fields: [session_id], references: [session_id], onDelete: Cascade, onUpdate: NoAction)
+  skill           Skill           @relation(fields: [skill_id], references: [skill_id], onUpdate: NoAction)
 
-  session    QuizSession     @relation(fields: [session_id], references: [id], onDelete: Cascade)
-  skill      Skill           @relation(fields: [skill_id], references: [id], onDelete: Restrict)
-  question   Question        @relation(fields: [question_id], references: [id], onDelete: Restrict)
-  difficulty DifficultyLevel @relation(fields: [difficulty_id], references: [id], onDelete: Restrict)
-
+  @@index([difficulty_id], map: "idx_student_answers_difficulty")
+  @@index([question_id], map: "idx_student_answers_question")
+  @@index([session_id], map: "idx_student_answers_session")
+  @@index([skill_id], map: "idx_student_answers_skill")
   @@map("student_answers")
   @@schema("education")
 }
 
 model StudentSkillResult {
-  id              Int      @id @default(autoincrement())
-  session_id      Int
-  skill_id        Int
-  obtained_score  Int
-  maximum_score   Int
-  percentage      Decimal  @db.Decimal(5, 2)
-  skill_level     Int
-  created_at      DateTime @default(now())
+  result_id      Int         @id @default(autoincrement())
+  session_id     Int
+  skill_id       Int
+  obtained_score Int
+  maximum_score  Int
+  percentage     Decimal     @db.Decimal(5, 2)
+  skill_level    Int         @db.SmallInt
+  created_at     DateTime    @default(now()) @db.Timestamp(6)
+  session        QuizSession @relation(fields: [session_id], references: [session_id], onDelete: Cascade, onUpdate: NoAction)
+  skill          Skill       @relation(fields: [skill_id], references: [skill_id], onUpdate: NoAction)
 
-  session QuizSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
-  skill   Skill       @relation(fields: [skill_id], references: [id], onDelete: Restrict)
-
+  @@index([session_id], map: "idx_student_skill_results_session")
+  @@index([skill_id], map: "idx_student_skill_results_skill")
   @@map("student_skill_results")
+  @@schema("education")
+}
+
+model quiz_state {
+  session_id         Int
+  skill_id           Int
+  current_difficulty Int?        @default(1)
+  correct_streak     Int?        @default(0)
+  wrong_streak       Int?        @default(0)
+  questions_answered Int?        @default(0)
+  obtained_score     Int?        @default(0)
+  maximum_score      Int?        @default(0)
+  state              Json?
+  quiz_sessions      QuizSession @relation(fields: [session_id], references: [session_id], onDelete: Cascade, onUpdate: NoAction)
+  skills             Skill       @relation(fields: [skill_id], references: [skill_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([session_id, skill_id])
+  @@schema("education")
+}
+
+model community_bookmarks {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String          @db.Uuid
+  post_id         String          @db.Uuid
+  created_at      DateTime        @default(now()) @db.Timestamp(6)
+  community_posts community_posts @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_bookmark_post")
+  users           User            @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_bookmark_user")
+
+  @@unique([user_id, post_id], map: "uq_bookmark_user_post")
+  @@index([post_id], map: "idx_bookmark_post")
+  @@index([user_id], map: "idx_bookmark_user")
+  @@schema("education")
+}
+
+model community_comments {
+  id                       String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  post_id                  String                @db.Uuid
+  author_id                String                @db.Uuid
+  parent_id                String?               @db.Uuid
+  content                  String
+  reactions_count          Int                   @default(0)
+  created_at               DateTime              @default(now()) @db.Timestamp(6)
+  updated_at               DateTime              @default(now()) @db.Timestamp(6)
+  deleted_at               DateTime?             @db.Timestamp(6)
+  users                    User                  @relation(fields: [author_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_comment_author")
+  community_comments       community_comments?   @relation("community_commentsTocommunity_comments", fields: [parent_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_comment_parent")
+  other_community_comments community_comments[]  @relation("community_commentsTocommunity_comments")
+  community_posts          community_posts       @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_comment_post")
+  community_reactions      community_reactions[]
+
+  @@index([author_id], map: "idx_community_comments_author")
+  @@index([created_at(sort: Desc)], map: "idx_community_comments_created")
+  @@index([deleted_at], map: "idx_community_comments_deleted")
+  @@index([parent_id], map: "idx_community_comments_parent")
+  @@index([post_id], map: "idx_community_comments_post")
+  @@schema("education")
+}
+
+model community_post_tags {
+  post_id         String          @db.Uuid
+  tag_id          String          @db.Uuid
+  created_at      DateTime        @default(now()) @db.Timestamp(6)
+  community_posts community_posts @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_post_tag_post")
+  community_tags  community_tags  @relation(fields: [tag_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_post_tag_tag")
+
+  @@id([post_id, tag_id], map: "pk_community_post_tags")
+  @@index([post_id], map: "idx_post_tags_post")
+  @@index([tag_id], map: "idx_post_tags_tag")
+  @@schema("education")
+}
+
+model community_posts {
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  author_id           String                @db.Uuid
+  title               String                @db.VarChar(255)
+  content             String
+  post_type           community_post_type
+  status              community_post_status @default(Published)
+  visibility          community_visibility  @default(Public)
+  media_url           String?
+  metadata            Json?
+  comments_count      Int                   @default(0)
+  reactions_count     Int                   @default(0)
+  created_at          DateTime              @default(now()) @db.Timestamp(6)
+  updated_at          DateTime              @default(now()) @db.Timestamp(6)
+  deleted_at          DateTime?             @db.Timestamp(6)
+  community_bookmarks community_bookmarks[]
+  community_comments  community_comments[]
+  community_post_tags community_post_tags[]
+  users               User                  @relation(fields: [author_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_community_post_author")
+  community_reactions community_reactions[]
+
+  @@index([author_id], map: "idx_community_posts_author")
+  @@index([created_at(sort: Desc)], map: "idx_community_posts_created_at")
+  @@index([deleted_at], map: "idx_community_posts_deleted_at")
+  @@index([post_type], map: "idx_community_posts_post_type")
+  @@index([status], map: "idx_community_posts_status")
+  @@index([visibility], map: "idx_community_posts_visibility")
+  @@schema("education")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model community_reactions {
+  id                 String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id            String                  @db.Uuid
+  post_id            String?                 @db.Uuid
+  comment_id         String?                 @db.Uuid
+  reaction_type      community_reaction_type @default(Like)
+  created_at         DateTime                @default(now()) @db.Timestamp(6)
+  community_comments community_comments?     @relation(fields: [comment_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reaction_comment")
+  community_posts    community_posts?        @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reaction_post")
+  users              User                    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reaction_user")
+
+  @@index([comment_id], map: "idx_reaction_comment")
+  @@index([post_id], map: "idx_reaction_post")
+  @@index([user_id], map: "idx_reaction_user")
+  @@schema("education")
+}
+
+model community_tags {
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String                @unique(map: "uq_community_tag_name") @db.VarChar(50)
+  slug                String                @unique(map: "uq_community_tag_slug") @db.VarChar(50)
+  usage_count         Int                   @default(0)
+  created_at          DateTime              @default(now()) @db.Timestamp(6)
+  community_post_tags community_post_tags[]
+
+  @@index([slug], map: "idx_community_tags_slug")
+  @@index([usage_count(sort: Desc)], map: "idx_community_tags_usage")
+  @@schema("education")
+}
+
+enum community_post_status {
+  Draft
+  Published
+  Archived
+  Flagged
+
+  @@schema("education")
+}
+
+enum community_post_type {
+  Discussion
+  Question
+  Course
+  Announcement
+  Job
+  Internship
+  Project
+  Achievement
+  Event
+
+  @@schema("education")
+}
+
+enum community_reaction_type {
+  Like
+  Celebrate
+  Support
+  Insightful
+
+  @@schema("education")
+}
+
+enum community_visibility {
+  Public
+  Students
+  Educators
+  Employers
+  Admins
+
   @@schema("education")
 }

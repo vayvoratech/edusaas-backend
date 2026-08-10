@@ -119,37 +119,119 @@ function learningProgressByEnrollment(
  * @returns {Promise<T|null>}
  * @template T
  */
-const safeQuery = async (query) => {
-  try {
-    return await query;
-  } catch (e) {
-    if (e.code === "P2025") return null;
-    throw e;
-  }
-};
-
-// User rows are always fetched with role + role.permissions included so we can
-// expose `role` (name) and `permissions[]` to callers.
-const userInclude = {
-  role: { include: { permissions: { include: { permission: true } } } },
-};
-
-const mapUser = (u) =>
-  u && {
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    role_id: u.role_id,
-    role: u.role?.name || null,
-
-    career_goal: u.career_goal,
-
-    permissions: u.role?.permissions?.map((rp) => rp.permission.name) || [],
-    password_hash: u.password_hash,
-    status: u.status,
-    last_login: iso(u.last_login),
-    created_at: iso(u.created_at),
+  const safeQuery = async (query) => {
+    try {
+      return await query;
+    } catch (e) {
+      if (e.code === "P2025") return null;
+      throw e;
+    }
   };
+
+  // User rows are always fetched with role + role.permissions included so we can
+  // expose `role` (name) and `permissions[]` to callers.
+  const userInclude = {
+        role: {
+            include: {
+                permissions: {
+                    include: {
+                        permission: true
+                    }
+                }
+            }
+        },
+
+        domainRole: true,
+    };
+
+  const mapUser = (u) =>
+      u && {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+
+        role_id: u.role_id,
+        role: u.role?.name || null,
+
+        domain_role_id: u.domain_role_id,
+        domain_role: u.domainRole?.domain_name || null,
+
+        permissions:
+          u.role?.permissions?.map((rp) => rp.permission.name) || [],
+
+        password_hash: u.password_hash,
+        status: u.status,
+        last_login: iso(u.last_login),
+        created_at: iso(u.created_at),
+      };
+
+  const communityPostInclude = {
+    users: {
+      include: {
+        role: {
+          select: {
+            name: true,
+          }
+        }
+      },
+    },
+
+    community_post_tags: {
+      include: {
+        community_tags: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          }
+        }
+      },
+    },
+  }
+
+  function mapCommunityPost(post) {
+  if (!post) return null;
+
+  return {
+    id: post.id,
+    author_id: post.author_id,
+
+    title: post.title,
+    content: post.content,
+
+    post_type: post.post_type,
+    status: post.status,
+    visibility: post.visibility,
+
+    media_url: post.media_url,
+    metadata: post.metadata,
+
+    comments_count: post.comments_count,
+    reactions_count: post.reactions_count,
+
+    created_at: iso(post.created_at),
+    updated_at: iso(post.updated_at),
+    deleted_at: iso(post.deleted_at),
+
+    author: {
+      id: post.users.id,
+      name: post.users.name,
+      email: post.users.email,
+      role: post.users.role.name,
+    },
+
+    tags:
+      post.community_post_tags?.map(
+        (tag) => ({
+          id: tag.community_tags.id,
+          name: tag.community_tags.name,
+          slug: tag.community_tags.slug,
+        })
+      ) ?? [],
+  };
+  }
+
+
 
 const mapAssessment = (a) => a && { ...a, date_taken: iso(a.date_taken) };
 const mapEnrollment = (e) => e && { ...e, enrolled_at: iso(e.enrolled_at) };
@@ -752,15 +834,21 @@ module.exports = {
   domainRoles: {
   list: async () =>
     prisma.domainRole.findMany({
+      select: {
+        domain_role_id: true,
+        domain_name: true,
+        category: true,
+        created_at: true,
+      },
       orderBy: {
         domain_name: "asc",
       },
     }),
 
-  findById: async (id) =>
+  findById: async (domain_role_id) =>
     prisma.domainRole.findUnique({
       where: {
-        id,
+        domain_role_id,
       },
       include: {
         requiredSkills: {
@@ -790,22 +878,22 @@ module.exports = {
       data,
     }),
 
-  update: async (id, data) =>
+  update: async (domain_role_id, data) =>
     safeQuery(
       prisma.domainRole.update({
         where: {
-          id,
+          domain_role_id,
         },
         data,
       })
     ),
 
-  remove: async (id) =>
+  remove: async (domain_role_id) =>
     !!(
       await safeQuery(
         prisma.domainRole.delete({
           where: {
-            id,
+            domain_role_id,
           },
         })
       )
@@ -820,10 +908,10 @@ module.exports = {
       },
     }),
 
-  findById: async (id) =>
+  findById: async (skill_id) =>
     prisma.skill.findUnique({
       where: {
-        id,
+        skill_id,
       },
     }),
 
@@ -839,22 +927,22 @@ module.exports = {
       data,
     }),
 
-  update: async (id, data) =>
+  update: async (skill_id, data) =>
     safeQuery(
       prisma.skill.update({
         where: {
-          id,
+          skill_id,
         },
         data,
       })
     ),
 
-  remove: async (id) =>
+  remove: async (skill_id) =>
     !!(
       await safeQuery(
         prisma.skill.delete({
           where: {
-            id,
+            skill_id,
           },
         })
       )
@@ -878,10 +966,10 @@ module.exports = {
       ],
     }),
 
-  findById: async (id) =>
+  findById: async (domain_required_skill_id) =>
     prisma.domainRequiredSkill.findUnique({
       where: {
-        id,
+        domain_required_skill_id,
       },
       include: {
         domainRole: true,
@@ -889,7 +977,7 @@ module.exports = {
       },
     }),
 
-  findByDomainRoleId: async (domainRoleId) =>
+    findByDomainRoleId: async (domainRoleId) =>
     prisma.domainRequiredSkill.findMany({
       where: {
         domain_role_id: domainRoleId,
@@ -897,9 +985,11 @@ module.exports = {
       include: {
         skill: true,
       },
-      orderBy: {
-        required_level: "desc",
-      },
+      orderBy: [
+        {
+          skill_id: "asc",
+        },
+      ],
     }),
 
   create: async (data) =>
@@ -907,22 +997,22 @@ module.exports = {
       data,
     }),
 
-  update: async (id, data) =>
+  update: async (domain_required_skill_id, data) =>
     safeQuery(
       prisma.domainRequiredSkill.update({
         where: {
-          id,
+          domain_required_skill_id,
         },
         data,
       })
     ),
 
-  remove: async (id) =>
+  remove: async (domain_required_skill_id) =>
     !!(
       await safeQuery(
         prisma.domainRequiredSkill.delete({
           where: {
-            id,
+            domain_required_skill_id,
           },
         })
       )
@@ -979,101 +1069,51 @@ module.exports = {
   },
 
   questions: {
-  list: async (filters = {}) => {
-    const where = {};
-
-    if (filters.skill_id !== undefined)
-      where.skill_id = filters.skill_id;
-
-    if (filters.difficulty_id !== undefined)
-      where.difficulty_id = filters.difficulty_id;
-
-    if (filters.is_active !== undefined)
-      where.is_active = filters.is_active;
-
-    return prisma.question.findMany({
-      where,
+  list: async () =>
+    prisma.question.findMany({
       include: {
-        skill: true,
         difficulty: true,
+        skill: true,
       },
-      orderBy: [
-        {
-          skill_id: "asc",
-        },
-        {
-          difficulty_id: "asc",
-        },
-      ],
-    });
-  },
+      orderBy: {
+        question_id: "asc",
+      },
+    }),
 
-  findById: async (id) =>
+  findById: async (question_id) =>
     prisma.question.findUnique({
       where: {
-        id,
+        question_id,
       },
       include: {
-        skill: true,
         difficulty: true,
+        skill: true,
       },
     }),
 
-  findBySkillId: async (skillId) =>
+  findBySkill: async (skill_id) =>
     prisma.question.findMany({
       where: {
-        skill_id: skillId,
-        is_active: true,
+        skill_id,
       },
       include: {
-        skill: true,
-        difficulty: true,
-      },
-      orderBy: [
-        {
-          difficulty_id: "asc",
-        },
-        {
-          id: "asc",
-        },
-      ],
-    }),
-
-  findBySkillIds: async (skillIds) =>
-    prisma.question.findMany({
-      where: {
-        skill_id: {
-          in: skillIds,
-        },
-        is_active: true,
-      },
-      include: {
-        skill: true,
-        difficulty: true,
-      },
-      orderBy: [
-        {
-          skill_id: "asc",
-        },
-        {
-          difficulty_id: "asc",
-        },
-      ],
-    }),
-
-  findBySkillAndDifficulty: async (skillId, difficultyId) =>
-    prisma.question.findMany({
-      where: {
-        skill_id: skillId,
-        difficulty_id: difficultyId,
-        is_active: true,
-      },
-      include: {
-        skill: true,
         difficulty: true,
       },
       orderBy: {
-        id: "asc",
+        question_id: "asc",
+      },
+    }),
+
+  findByDifficulty: async (difficulty_id) =>
+    prisma.question.findMany({
+      where: {
+        difficulty_id,
+      },
+      include: {
+        skill: true,
+      },
+      orderBy: {
+        question_id: "asc",
       },
     }),
 
@@ -1082,27 +1122,22 @@ module.exports = {
       data,
     }),
 
-  createMany: async (data) =>
-    prisma.question.createMany({
-      data,
-    }),
-
-  update: async (id, data) =>
+  update: async (question_id, data) =>
     safeQuery(
       prisma.question.update({
         where: {
-          id,
+          question_id,
         },
         data,
       })
     ),
 
-  remove: async (id) =>
+  remove: async (question_id) =>
     !!(
       await safeQuery(
         prisma.question.delete({
           where: {
-            id,
+            question_id,
           },
         })
       )
@@ -1110,62 +1145,124 @@ module.exports = {
   },
 
   quizSessions: {
-    list: async () =>
-      prisma.quizSession.findMany({
-        include: {
-          user: true,
-          domainRole: true,
-        },
-        orderBy: {
-          created_at: "desc",
-        },
-      }),
+  list: async () =>
+    prisma.quizSession.findMany({
+      include: {
+        user: true,
+        domainRole: true,
+      },
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
 
-    findById: async (id) =>
-      prisma.quizSession.findUnique({
-        where: { id },
-        include: {
-          user: true,
-          domainRole: true,
-          answers: true,
-          skillResults: true,
-        },
-      }),
+  findById: async (session_id) =>
+    prisma.quizSession.findUnique({
+      where: {
+        session_id,
+      },
+      include: {
+        user: true,
+        domainRole: true,
+        answers: true,
+        skillResults: true,
+      },
+    }),
 
-    findByUserId: async (userId) =>
-      prisma.quizSession.findMany({
+  findByUserId: async (user_id) =>
+    prisma.quizSession.findMany({
+      where: {
+        user_id,
+      },
+      include: {
+        domainRole: true,
+      },
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
+
+    findActiveByUser: async (user_id) =>
+  prisma.quizSession.findFirst({
+    where: {
+      user_id,
+      status: "In Progress",
+    },
+    include: {
+      domainRole: true,
+    },
+    orderBy: {
+      start_time: "desc",
+    },
+  }),
+
+findCompletedByUser: async (user_id) =>
+  prisma.quizSession.findFirst({
+    where: {
+      user_id,
+      status: "Completed",
+    },
+    include: {
+      domainRole: true,
+    },
+    orderBy: {
+      start_time: "desc",
+    },
+  }),
+
+  create: async (data) => {
+  try {
+    return await prisma.quizSession.create({
+      data,
+      include: {
+        domainRole: true,
+      },
+    });
+  } catch (err) {
+
+    // Another request already created the active session
+    if (err.code === "P2002") {
+
+      const existing =
+        await prisma.quizSession.findFirst({
+          where: {
+            user_id: data.user_id,
+            status: "In Progress",
+          },
+          include: {
+            domainRole: true,
+          },
+        });
+
+      if (existing) {
+        return existing;
+      }
+    }
+
+    throw err;
+  }
+ },
+
+  update: async (session_id, data) =>
+    safeQuery(
+      prisma.quizSession.update({
         where: {
-          user_id: userId,
+          session_id,
         },
-        include: {
-          domainRole: true,
-        },
-        orderBy: {
-          created_at: "desc",
-        },
-      }),
-
-    create: async (data) =>
-      prisma.quizSession.create({
         data,
-      }),
+      })
+    ),
 
-    update: async (id, data) =>
-      safeQuery(
-        prisma.quizSession.update({
-          where: { id },
-          data,
+  remove: async (session_id) =>
+    !!(
+      await safeQuery(
+        prisma.quizSession.delete({
+          where: {
+            session_id,
+          },
         })
-      ),
-
-    remove: async (id) =>
-      !!(
-        await safeQuery(
-          prisma.quizSession.delete({
-            where: { id },
-          })
-        )
-      ),
+      )
+    ),
   },
 
   studentAnswers: {
@@ -1292,9 +1389,289 @@ module.exports = {
     ),
   },
 
+  quizStates: {
+    findById: async (session_id, skill_id) =>
+      prisma.quiz_state.findUnique({
+        where: {
+          session_id_skill_id: {
+            session_id,
+            skill_id,
+          },
+        },
+      }),
 
+    create: async (data) => {
+      try {
+        return await prisma.quiz_state.create({
+          data,
+        });
+      } catch (err) {
 
+        // Another request already created this quiz state
+        if (err.code === "P2002") {
 
+          const existing =
+            await prisma.quiz_state.findUnique({
+              where: {
+                session_id_skill_id: {
+                  session_id: data.session_id,
+                  skill_id: data.skill_id,
+                },
+              },
+            });
+
+          if (existing) {
+            return existing;
+          }
+        }
+
+        throw err;
+      }
+    },
+
+    update: async (session_id, skill_id, data) =>
+      safeQuery(
+        prisma.quiz_state.update({
+          where: {
+            session_id_skill_id: {
+              session_id,
+              skill_id,
+            },
+          },
+          data,
+        })
+      ),
+
+    remove: async (session_id, skill_id) =>
+      !!(
+        await safeQuery(
+          prisma.quiz_state.delete({
+            where: {
+              session_id_skill_id: {
+                session_id,
+                skill_id,
+              },
+            },
+          })
+        )
+      ),
+
+    findActiveByUser: async (user_id) =>
+      prisma.quizSession.findFirst({
+        where: {
+          user_id,
+          status: "In Progress",
+        },
+        orderBy: {
+          start_time: "desc",
+        },
+      }),
+
+      findBySessionId: async (session_id) =>
+      prisma.quiz_state.findFirst({
+        where: {
+          session_id,
+        },
+      }),
+  },
+
+  communityPosts: {
+
+    async create(data) {
+      return mapCommunityPost(
+        await prisma.community_posts.create({
+          data,
+          include: communityPostInclude,
+        })
+      );
+    },
+
+    async findById(id) {
+      return mapCommunityPost(
+        await prisma.community_posts.findUnique({
+          where: { id },
+          include: communityPostInclude,
+        })
+      );
+    },
+
+    async getFeed({
+      page = 1,
+      limit = 10,
+      post_type,
+      visibility,
+      author_id,
+    } = {}) {
+
+      const where = {
+        deleted_at: null,
+        status: "Published",
+      };
+
+      if (post_type) {
+        where.post_type = post_type;
+      }
+
+      if (visibility) {
+        where.visibility = visibility;
+      }
+
+      if (author_id) {
+        where.author_id = author_id;
+      }
+
+      return (
+        await prisma.community_posts.findMany({
+          where,
+
+          include: communityPostInclude,
+
+          orderBy: {
+            created_at: "desc",
+          },
+
+          skip: (page - 1) * limit,
+
+          take: limit,
+        })
+      ).map(mapCommunityPost);
+    },
+
+    async findByAuthor(author_id) {
+      return (
+        await prisma.community_posts.findMany({
+          where: {
+            author_id,
+            deleted_at: null,
+          },
+          include: communityPostInclude,
+          orderBy: {
+            created_at: "desc",
+          },
+        })
+      ).map(mapCommunityPost);
+    },
+
+    async update(id, data) {
+      return mapCommunityPost(
+        await safeQuery(
+          prisma.community_posts.update({
+            where: { id },
+            data,
+            include: communityPostInclude,
+          })
+        )
+      );
+    },
+
+    async softDelete(id) {
+      return mapCommunityPost(
+        await safeQuery(
+          prisma.community_posts.update({
+            where: { id },
+            data: {
+              deleted_at: new Date(),
+            },
+            include: communityPostInclude,
+          })
+        )
+      );
+    },
+
+    async restore(id) {
+      return mapCommunityPost(
+        await safeQuery(
+          prisma.community_posts.update({
+            where: { id },
+            data: {
+              deleted_at: null,
+            },
+            include: communityPostInclude,
+          })
+        )
+      );
+    },
+
+    async exists(id) {
+
+      const count = await prisma.community_posts.count({
+        where: {
+          id,
+          deleted_at: null,
+        },
+      });
+
+      return count > 0;
+    },
+
+    async count(filters = {}) {
+
+      const where = {
+        deleted_at: null,
+      };
+
+      if (filters.author_id) {
+        where.author_id = filters.author_id;
+      }
+
+      if (filters.post_type) {
+        where.post_type = filters.post_type;
+      }
+
+      if (filters.status) {
+        where.status = filters.status;
+      }
+
+      return prisma.community_posts.count({
+        where,
+      });
+    },
+
+    async incrementCommentCount(id) {
+      return prisma.community_posts.update({
+        where: { id },
+        data: {
+          comments_count: {
+            increment: 1,
+          },
+        },
+      });
+    },
+
+    async decrementCommentCount(id) {
+      return prisma.community_posts.update({
+        where: { id },
+        data: {
+          comments_count: {
+            decrement: 1,
+          },
+        },
+      });
+    },
+
+    async incrementReactionCount(id) {
+      return prisma.community_posts.update({
+        where: { id },
+        data: {
+          reactions_count: {
+            increment: 1,
+          },
+        },
+      });
+    },
+
+    async decrementReactionCount(id) {
+      return prisma.community_posts.update({
+        where: { id },
+        data: {
+          reactions_count: {
+            decrement: 1,
+          },
+        },
+      });
+    },
+
+  },
 
   insights: async () => {
     const [users, courses, enrollments, jobs, applications, assessments] = await Promise.all([
@@ -1358,6 +1735,7 @@ module.exports = {
     const [
       user,
       initialAssessment,
+      gapReport,
       enrollments,
       tasks,
       achievements,
@@ -1365,46 +1743,81 @@ module.exports = {
       certificates,
     ] = await Promise.all([
 
-      prisma.user.findUnique({
+    prisma.user.findUnique({
       where: { id: user_id },
       select: {
         name: true,
-        career_goal: true,
+        created_at:true,
+        domain_role_id: true,
+
+        domainRole: {
+          select: {
+            domain_role_id: true,
+            domain_name: true,
+            category: true,
+          },
+        },
+
         profile: {
           select: {
             initial_assessment_completed: true,
-            },
           },
         },
-      }),
+      },
+    }),
 
-      prisma.assessment.findFirst({
-        where: {
-          user_id,
-          is_initial: true,
+    prisma.quizSession.findFirst({
+    where: {
+      user_id,
+          status: "Completed",
         },
-        select: {
-          score : true,
-          completed: true,
-          answers: true
-        },
-      }),
+        orderBy: {
+            end_time: "desc",
+          },
+          include: {
+            skillResults: {
+              include: {
+                skill: {
+                  select: {
+                    skill_name: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+    
+    prisma.gapReport.findFirst({
+      where: {
+        user_id,
+      },
+    }),
 
       prisma.enrollment.findMany({
         where: { user_id },
         include: {
-          course: {
-            select: {
-              id: true,
-              title: true,
+            course: {
+                include: {
+                    lessons: {
+                        select: {
+                            id: true,
+                        },
+                    },
+                },
             },
-          },
         },
       }),
 
       prisma.task.findMany({
         where: { user_id },
-        include: {
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          created_at: true,
+          completed_at: true,
+          due_date: true,
+
           course: {
             select: {
               id: true,
@@ -1452,6 +1865,30 @@ module.exports = {
      (sum, record) => sum + (record.watched_duration || 0),0);
 
     const learningHoursLogged = Math.round(learningSeconds / 3600);
+    const studentStartDate =
+    enrollments.length > 0
+      ? enrollments.reduce((earliest, enrollment) =>
+          enrollment.enrolled_at < earliest
+            ? enrollment.enrolled_at
+            : earliest,
+          enrollments[0].enrolled_at
+        )
+      : user?.created_at;
+
+    const totalLessons = enrollments.reduce(
+        (sum, enrollment) =>
+          sum + enrollment.course.lessons.length,
+        0
+      );
+
+      const completedLessons = progress.filter(
+        (record) => record.completion_flag
+      ).length;
+
+      const learningProgressPercentage =
+        totalLessons === 0
+          ? 0
+          : Math.round((completedLessons / totalLessons) * 100);
 
     const activeCourses = enrollments.filter(
       (enrollment) => enrollment.status === "active"
@@ -1481,7 +1918,7 @@ module.exports = {
       .map((task) => ({
         id: task.id,
         title: `Completed task "${task.title}"`,
-        when: task.created_at,
+        when: task.completed_at,
         type: "task",
       }));
 
@@ -1509,17 +1946,151 @@ module.exports = {
       .sort((a, b) => new Date(b.when) - new Date(a.when))
       .slice(0, 5);
 
+      // =========================================
+      // Learning Analytics
+      // =========================================
+
+      const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+      // Student joined date
+      const joinedDate =
+        enrollments.length > 0
+          ? enrollments.reduce(
+              (earliest, enrollment) =>
+                enrollment.enrolled_at < earliest
+                  ? enrollment.enrolled_at
+                  : earliest,
+              enrollments[0].enrolled_at
+            )
+          : user?.created_at || new Date();
+
+      // Number of weeks since joining
+      const elapsedWeeks = Math.max(
+        1,
+        Math.ceil(
+          (Date.now() - joinedDate.getTime()) /
+            MS_PER_WEEK
+        )
+      );
+
+      // Always show minimum 4 weeks
+      const totalWeeks = Math.max(4, elapsedWeeks);
+
+      // Readiness Score
+      const readinessScore = gapReport?.readiness_score?? 0;
+
+      const learningAnalytics = [];
+
+      for (let week = 1; week <= totalWeeks; week++) {
+
+        // Future week (no data yet)
+        if (week > elapsedWeeks) {
+
+          learningAnalytics.push({
+            week,
+            label: `Week ${week}`,
+
+            readiness: null,
+
+            lessonsCompleted: null,
+            totalLessons,
+            lessonPercentage: null,
+
+            assignmentsCompleted: null,
+            totalAssignments: tasks.length,
+            assignmentPercentage: null,
+          });
+
+          continue;
+        }
+
+        const weekEnd = new Date(
+          joinedDate.getTime() + week * MS_PER_WEEK
+        );
+
+        // Lessons completed until this week
+        const lessonsCompleted = progress.filter(
+          (record) =>
+            record.completion_flag &&
+            record.completed_at &&
+            new Date(record.completed_at) <= weekEnd
+        ).length;
+
+        const lessonPercentage =
+          totalLessons === 0
+            ? 0
+            : Math.round(
+                (lessonsCompleted / totalLessons) * 100
+              );
+
+        // Assignments completed until this week
+        const completedTasks = tasks.filter(
+          (task) =>
+            task.status === "done" &&
+            task.completed_at &&
+            new Date(task.completed_at) <= weekEnd
+        ).length;
+
+        const assignmentPercentage =
+          tasks.length === 0
+            ? 0
+            : Math.round(
+                (completedTasks / tasks.length) * 100
+              );
+
+        learningAnalytics.push({
+          week,
+          label: `Week ${week}`,
+
+          readiness: readinessScore,
+
+          lessonsCompleted,
+          totalLessons,
+          lessonPercentage,
+
+          assignmentsCompleted: completedTasks,
+          totalAssignments: tasks.length,
+          assignmentPercentage,
+        });
+
+      }
+
+        while(learningAnalytics.length < 4){
+          const last = learningAnalytics[learningAnalytics.length - 1]
+
+          learningAnalytics.push({
+            ...last,
+            week: learningAnalytics.length+1,
+            label: `week ${learningAnalytics.length+1}`,
+          })
+        }
+
+
+
     return {
     studentName: user?.name,
-    careerGoal: user?.career_goal,
-    assessmentCompleted:
-      initialAssessment?.completed ?? false,
+    domainRoleId: user?.domain_role_id,
+    domainRole: user?.domainRole?.domain_name || null,
+    assessmentCompleted: !!initialAssessment,
+    learningProgressPercentage,
+    completedLessons,
+    totalLessons,
 
-    readinessScore:
-      initialAssessment?.score ?? null,
+    readinessScore,
 
     skillBreakdown:
-     initialAssessment?.answers ?? {},
+      initialAssessment?.skillResults?.reduce(
+        (acc, skill) => {
+          acc[skill.skill.skill_name] = {
+            percentage: Number(skill.percentage),
+            skillLevel: skill.skill_level,
+            obtainedScore: skill.obtained_score,
+            maximumScore: skill.maximum_score,
+          };
+          return acc;
+        },
+        {}
+      ) || {},
 
     coursesEnrolled: enrollments.length,
     activeCourses,
@@ -1542,6 +2113,7 @@ module.exports = {
     ),
 
     recentActivity,
+    learningAnalytics,
     };
    },
 };

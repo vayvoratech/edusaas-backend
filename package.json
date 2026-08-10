@@ -25,6 +25,7 @@
   "type": "commonjs",
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "axios": "^1.19.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -40,5 +41,13 @@
     "cross-env": "^7.0.3",
     "dotenv-cli": "^11.0.0",
     "nodemon": "^3.1.4"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.8"
+  },
+  "allowScripts": {
+    "prisma@6.19.3": true,
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true
   }
 }

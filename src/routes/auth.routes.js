@@ -45,43 +45,61 @@ function generateOtp() {
  */
 router.post("/register", async (req, res, next) => {
   try {
-    const { name, email, password, role, career_goal } = req.body || {};
+    const { name, email, password, role, domain_role_id } = req.body || {};
 
     // Validate Request
     if (!name || !email || !password || !role) {
       return res.status(400).json({
-        error: "name, email, password, role are required",
+        error: "name, email, password and role are required",
       });
     }
 
     if (!["student", "educator", "employer", "admin"].includes(role)) {
       return res.status(400).json({
-        error: "invalid role",
+        error: "Invalid role",
+      });
+    }
+
+    // Students must choose a domain role
+    if (role === "student" && !domain_role_id) {
+      return res.status(400).json({
+        error: "domain_role_id is required for students",
       });
     }
 
     // Check Existing User
     if (await repo.users.findByEmail(email.trim().toLowerCase())) {
       return res.status(409).json({
-        error: "email already registered",
+        error: "Email already registered",
       });
     }
 
-    // Create User
+    // Validate Domain Role
+    if (role === "student") {
+      const domainRole = await repo.domainRoles.findById(domain_role_id);
+
+      if (!domainRole) {
+        return res.status(400).json({
+          error: "Invalid domain role",
+        });
+      }
+    }
+
+    // Hash Password
     const password_hash = await bcrypt.hash(password, 10);
 
+    // Create User
     const user = await repo.users.create({
       name: name.trim(),
       email: email.trim().toLowerCase(),
       role,
       password_hash,
-      career_goal: role === "student" ? career_goal : null,
+      domain_role_id: role === "student" ? domain_role_id : null,
     });
 
+    // Create Profile (Students)
     if (role === "student") {
-
       await repo.profiles.upsert(user.id, {
-        career_goal,
         institution: null,
         company: null,
         preferences: {},
@@ -99,7 +117,7 @@ router.post("/register", async (req, res, next) => {
       .update(refreshToken)
       .digest("hex");
 
-    // Store bcrypt hash of digest
+    // Store bcrypt hash
     const token_hash = await bcrypt.hash(tokenDigest, 10);
 
     // Decode refresh token expiry
@@ -117,13 +135,14 @@ router.post("/register", async (req, res, next) => {
       accessToken,
       refreshToken,
       user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      career_goal: user.career_goal,
-      permissions: user.permissions || [],
-    },
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        domain_role_id: user.domain_role_id,
+        domain_role: user.domain_role,
+        permissions: user.permissions || [],
+      },
     });
   } catch (err) {
     next(err);
@@ -226,7 +245,8 @@ router.post("/login", async (req, res, next) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        career_goal: user.career_goal,
+        domain_role_id: user.domain_role_id,
+        domain_role: user.domain_role,
         permissions: user.permissions || [],
       },
     });

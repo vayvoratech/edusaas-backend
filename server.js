@@ -1,10 +1,13 @@
+// Import required modules
 const express = require("express");
 const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 
+// Import environment variables and Swagger configuration
 const { port, appEnv } = require("./src/config/env");
 const swaggerSpec = require("./src/config/swagger");
 
+// Import route handlers
 const authRoutes = require("./src/routes/auth.routes");
 const usersRoutes = require("./src/routes/users.routes");
 const assessmentsRoutes = require("./src/routes/assessments.routes");
@@ -26,14 +29,21 @@ const recommendationsRoutes = require("./src/routes/recommendations.routes");
 const announcementsRoutes = require("./src/routes/announcements.routes");
 const dashboardRoutes = require("./src/routes/dashboard.routes");
 const rbacRoutes = require("./src/routes/rbac.routes");
+const domainRolesRoutes = require("./src/routes/domainRoles.routes");
+const communityRoutes = require("./src/routes/community.routes");
 
+// Import error handling middleware
 const { notFound, errorHandler } = require("./src/middleware/errorHandler");
 
+// Initialize the Express application
 const app = express();
 
+// Enable Cross-Origin Resource Sharing (CORS)
 app.use(cors());
+// Parse incoming JSON requests
 app.use(express.json());
 
+// Root endpoint to check the status of the service
 app.get("/", (req, res) => {
   res.json({
     name: "EDU-SAAS Backend",
@@ -42,9 +52,12 @@ app.get("/", (req, res) => {
   });
 });
 
+// Serve Swagger API documentation
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// Provide the Swagger specification as a JSON file
 app.get("/api-docs.json", (req, res) => res.json(swaggerSpec));
 
+// Mount the various API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/assessments", assessmentsRoutes);
@@ -57,6 +70,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/subscriptions", subscriptionsRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/domain-roles", domainRolesRoutes);
 
 // Lesson routes are nested under /api/courses for /:id/lessons,
 // plus a top-level /api/lessons/lesson/:id for single-lesson detail.
@@ -71,10 +85,14 @@ app.use("/api/recommendations", recommendationsRoutes);
 app.use("/api/announcements", announcementsRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/rbac", rbacRoutes);
+app.use("/api/community", communityRoutes);
 
+// Middleware to handle 404 Not Found errors
 app.use(notFound);
+// Centralized error handler
 app.use(errorHandler);
 
+// Start the server and listen on the configured port
 app.listen(port, () => {
   console.log(`[env] APP_ENV=${appEnv}`);
   console.log(`EDU-SAAS backend running at http://localhost:${port}`);
