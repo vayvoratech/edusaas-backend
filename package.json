@@ -1,19 +1,20 @@
+```json
 {
   "name": "edusaas-backend",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "build": "...",
+    "test": "jest --runInBand"
   },
   "dependencies": {
     "express": "^5.1.0"
   },
   "devDependencies": {
-    "eslint": "^9.0.0"
+    "eslint": "^9.0.0",
+    "jest": "^30.0.0"
   }
 }
-"scripts": {
-  "lint": "eslint .",
-  "build": "..."
-}
+```
