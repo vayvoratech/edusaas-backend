@@ -1,3 +1,4 @@
+```yaml
 name: CI Pipeline
 
 on:
@@ -31,3 +32,8 @@ jobs:
       # Step 8 - Compile / Build
       - name: Build application
         run: npm run build
+
+      # Step 9 - Unit Testing
+      - name: Run Unit Tests
+        run: npm test
+```
