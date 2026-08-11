@@ -14,14 +14,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run CI checks
-        run: echo "CI pipeline is running successfully"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      - name: Linting
-        run: echo "Linting completed successfully"
-
-      - name: Unit Tests
-        run: echo "Unit tests passed successfully"
-
-      - name: Build Check
-        run: echo "Build completed successfully"
+      - name: Install dependencies
+        run: npm ci
