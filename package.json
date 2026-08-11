@@ -16,3 +16,9 @@
     "jest": "^30.0.0"
   }
 }
+"scripts": {
+  "start": "node server.js",
+  "lint": "eslint .",
+  "build": "...",
+  "test": "jest --runInBand"
+}
