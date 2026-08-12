@@ -1183,65 +1183,81 @@ module.exports = {
     }),
 
     findActiveByUser: async (user_id) =>
-  prisma.quizSession.findFirst({
-    where: {
-      user_id,
-      status: "In Progress",
-    },
-    include: {
-      domainRole: true,
-    },
-    orderBy: {
-      start_time: "desc",
-    },
-  }),
-
-findCompletedByUser: async (user_id) =>
-  prisma.quizSession.findFirst({
-    where: {
-      user_id,
-      status: "Completed",
-    },
-    include: {
-      domainRole: true,
-    },
-    orderBy: {
-      start_time: "desc",
-    },
-  }),
-
-  create: async (data) => {
-  try {
-    return await prisma.quizSession.create({
-      data,
+    prisma.quizSession.findFirst({
+      where: {
+        user_id,
+        status: {
+          in: ["In Progress", "Paused"],
+        },
+      },
       include: {
         domainRole: true,
       },
-    });
-  } catch (err) {
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
 
-    // Another request already created the active session
-    if (err.code === "P2002") {
+  findCompletedByUser: async (user_id) =>
+    prisma.quizSession.findFirst({
+      where: {
+        user_id,
+        status: "Completed",
+      },
+      include: {
+        domainRole: true,
+      },
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
 
-      const existing =
-        await prisma.quizSession.findFirst({
-          where: {
-            user_id: data.user_id,
-            status: "In Progress",
-          },
-          include: {
-            domainRole: true,
-          },
-        });
+  create: async (data) => {
+    try {
+      return await prisma.quizSession.create({
+        data,
+        include: {
+          domainRole: true,
+        },
+      });
+    } catch (err) {
 
-      if (existing) {
-        return existing;
+      // Another request already created the active session
+      if (err.code === "P2002") {
+
+        const existing =
+          await prisma.quizSession.findFirst({
+            where: {
+              user_id: data.user_id,
+              status: "In Progress",
+            },
+            include: {
+              domainRole: true,
+            },
+          });
+
+        if (existing) {
+          return existing;
+        }
       }
-    }
 
-    throw err;
-  }
- },
+      throw err;
+    }
+  },
+
+  findActiveWithResumeData: async (user_id) =>
+    prisma.quizSession.findFirst({
+      where: {
+        user_id,
+        status: "In Progress",
+      },
+      include: {
+        domainRole: true,
+      },
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
 
   update: async (session_id, data) =>
     safeQuery(

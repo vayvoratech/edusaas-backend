@@ -128,6 +128,85 @@ router.post("/initial-quiz/start", authRequired, async (req, res, next) => {
   }
 });
 
+router.post("/initial-quiz/pause", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can pause the initial quiz.",
+      });
+    }
+
+    const { session_id } = req.body || {};
+
+    if (session_id === undefined) {
+      return res.status(400).json({
+        error: "session_id is required.",
+      });
+    }
+
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result =
+      await assessmentService.pauseInitialAssessment(
+        req.user.sub,
+        sessionId
+      );
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post( "/initial-quiz/heartbeat", authRequired, async (req, res, next) => {
+    try {
+      if (req.user.role !== "student") {
+        return res.status(403).json({
+          error: "Only students can send assessment heartbeat.",
+        });
+      }
+
+      const { session_id } = req.body || {};
+
+      if (session_id === undefined) {
+        return res.status(400).json({
+          error: "session_id is required.",
+        });
+      }
+
+      const sessionId = Number(session_id);
+
+      if (!Number.isInteger(sessionId)) {
+        return res.status(400).json({
+          error: "session_id must be a valid integer.",
+        });
+      }
+
+      const result =
+        await assessmentService.heartbeatInitialAssessment(
+          req.user.sub,
+          sessionId
+        );
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 router.post("/initial-quiz/answer", authRequired, async (req, res, next) => {
   try {
     if (req.user.role !== "student") {

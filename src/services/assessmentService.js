@@ -3,6 +3,18 @@ const { assessments } = require("../data/prismaRepo");
 const flaskService = require("./flaskServices");
 const skillGapService = require("./skillGapService");
 
+const INITIAL_ASSESSMENT_DURATION_MINUTES = Number(process.env.INITIAL_ASSESSMENT_DURATION_MINUTES || 30)
+const INITIAL_ASSESSMENT_DURATION_MS = INITIAL_ASSESSMENT_DURATION_MINUTES * 60 * 1000;
+
+if (
+  !Number.isFinite(INITIAL_ASSESSMENT_DURATION_MINUTES) ||
+  INITIAL_ASSESSMENT_DURATION_MINUTES <= 0
+) {
+  throw new Error(
+    "INITIAL_ASSESSMENT_DURATION_MINUTES must be a positive number."
+  );
+}
+
 // Strip the answer key before anything goes back to the client.
 function toClientQuestion(question) {
   if (!question) return null;
@@ -23,143 +35,891 @@ async function startInitialAssessment(userId) {
   }
 
   if (!user.domain_role_id) {
-    const error = new Error("Student has not selected a domain role");
+    const error = new Error(
+      "Student has not selected a domain role"
+    );
     error.status = 400;
     throw error;
   }
 
-  const requiredSkills = await repo.domainRequiredSkills.findByDomainRoleId(
-    user.domain_role_id
-  );
+  const requiredSkills =
+    await repo.domainRequiredSkills.findByDomainRoleId(
+      user.domain_role_id
+    );
 
   if (!requiredSkills.length) {
-    const error = new Error("No skills configured for the selected domain");
+    const error = new Error(
+      "No skills configured for the selected domain"
+    );
     error.status = 404;
     throw error;
   }
 
-  let quizSession = await repo.quizSessions.findActiveByUser(userId);
+  const totalQuestions = requiredSkills.length * 10;
 
-  let currentSkillEntry;
+  /*
+   * ============================================================
+   * FIND EXISTING ASSESSMENT
+   * ============================================================
+   *
+   * This now finds both:
+   *
+   *   In Progress -> student was actively taking the test
+   *   Paused      -> student previously stopped the test
+   *
+   * Completed / Timed Out sessions are NOT returned.
+   */
+  const existingSession =
+    await repo.quizSessions.findActiveByUser(userId);
 
-  // --------------------------------------------------
-  // Resume Existing Session
-  // --------------------------------------------------
-  if (quizSession) {
-    currentSkillEntry =
+  /*
+   * ============================================================
+   * RESUME EXISTING ASSESSMENT
+   * ============================================================
+   */
+  if (existingSession) {
+    const now = new Date();
+
+    /*
+     * ----------------------------------------------------------
+     * CASE 1: PAUSED SESSION
+     * ----------------------------------------------------------
+     *
+     * remaining_seconds is the authoritative remaining time.
+     *
+     * Example:
+     *
+     * Student stopped at 15:00 remaining.
+     *
+     * Database:
+     *   status = "Paused"
+     *   remaining_seconds = 900
+     *
+     * Student returns later.
+     *
+     * We create a NEW deadline:
+     *
+     *   now + 900 seconds
+     *
+     * Therefore the student gets exactly 15:00 again.
+     */
+    if (existingSession.status === "Paused") {
+      const remainingSeconds =
+        Number(existingSession.remaining_seconds);
+
+      if (
+        !Number.isInteger(remainingSeconds) ||
+        remainingSeconds <= 0
+      ) {
+        await repo.quizSessions.update(
+          existingSession.session_id,
+          {
+            status: "Timed Out",
+            end_time: now,
+            remaining_seconds: 0,
+          }
+        );
+
+        const error = new Error(
+          "The assessment time has expired."
+        );
+
+        error.status = 409;
+        error.code = "ASSESSMENT_TIME_EXPIRED";
+
+        throw error;
+      }
+
+      const newDeadline = new Date(
+        now.getTime() + remainingSeconds * 1000
+      );
+
+      await repo.quizSessions.update(
+        existingSession.session_id,
+        {
+          status: "In Progress",
+          deadline_at: newDeadline,
+          paused_at: null,
+        }
+      );
+
+      existingSession.status = "In Progress";
+      existingSession.deadline_at = newDeadline;
+      existingSession.paused_at = null;
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * CASE 2: ALREADY IN PROGRESS
+     * ----------------------------------------------------------
+     *
+     * Do NOT reset the timer.
+     *
+     * The existing deadline remains authoritative.
+     */
+    if (existingSession.status === "In Progress") {
+      if (!existingSession.deadline_at) {
+        const error = new Error(
+          "Assessment timer information is missing."
+        );
+
+        error.status = 500;
+        throw error;
+      }
+
+      const deadlineTime =
+        new Date(existingSession.deadline_at).getTime();
+
+      const remainingSeconds = Math.max(
+        0,
+        Math.floor(
+          (deadlineTime - now.getTime()) / 1000
+        )
+      );
+
+      /*
+       * Server-side timeout check.
+       */
+      if (remainingSeconds <= 0) {
+        await repo.quizSessions.update(
+          existingSession.session_id,
+          {
+            status: "Timed Out",
+            end_time: now,
+            remaining_seconds: 0,
+          }
+        );
+
+        const error = new Error(
+          "The assessment time has expired."
+        );
+
+        error.status = 409;
+        error.code = "ASSESSMENT_TIME_EXPIRED";
+
+        throw error;
+      }
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * CURRENT QUESTION MUST EXIST
+     * ----------------------------------------------------------
+     */
+    if (!existingSession.current_question_id) {
+      const error = new Error(
+        "Assessment cannot be resumed because the current question is missing."
+      );
+
+      error.status = 500;
+      throw error;
+    }
+
+    const currentQuestion =
+      await repo.questions.findById(
+        existingSession.current_question_id
+      );
+
+    if (!currentQuestion) {
+      const error = new Error(
+        "The current assessment question could not be found."
+      );
+
+      error.status = 500;
+      throw error;
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * CALCULATE CURRENT REMAINING TIME
+     * ----------------------------------------------------------
+     */
+    const remainingSeconds = Math.max(
+      0,
+      Math.floor(
+        (
+          new Date(existingSession.deadline_at).getTime() -
+          now.getTime()
+        ) / 1000
+      )
+    );
+
+    /*
+     * ----------------------------------------------------------
+     * BUILD ASSESSMENT PROGRESS
+     * ----------------------------------------------------------
+     */
+    const completedResults =
+      await repo.studentSkillResults.findBySessionId(
+        existingSession.session_id
+      );
+
+    const completedSkillIds = new Set(
+      completedResults.map((r) => r.skill_id)
+    );
+
+    const currentSkill =
       requiredSkills.find(
-        (skill) => skill.skill_id === quizSession.current_skill_id
+        (rs) =>
+          rs.skill_id ===
+          existingSession.current_skill_id
       ) || requiredSkills[0];
-  }
-  // --------------------------------------------------
-  // Start New Session
-  // --------------------------------------------------
-  else {
-    currentSkillEntry = requiredSkills[0];
 
-    quizSession = await repo.quizSessions.create({
+    const currentSkillIndex = Math.max(
+      0,
+      requiredSkills.findIndex(
+        (rs) =>
+          rs.skill_id ===
+          existingSession.current_skill_id
+      )
+    );
+
+    const questionsAnswered =
+      existingSession.questions_answered || 0;
+
+    const assessmentMeta = {
+      total_skills: requiredSkills.length,
+
+      questions_per_skill: 10,
+
+      total_questions: totalQuestions,
+
+      current_skill_index: currentSkillIndex,
+
+      overall_question:
+        questionsAnswered + 1,
+
+      remaining_questions:
+        Math.max(
+          0,
+          totalQuestions - questionsAnswered
+        ),
+
+      skills: requiredSkills.map(
+        (item, index) => ({
+          skill_id: item.skill_id,
+
+          skill_name:
+            item.skill.skill_name,
+
+          index,
+
+          status:
+            completedSkillIds.has(item.skill_id)
+              ? "completed"
+              : item.skill_id ===
+                existingSession.current_skill_id
+              ? "current"
+              : "upcoming",
+        })
+      ),
+    };
+
+    /*
+     * ----------------------------------------------------------
+     * RETURN RESUMED ASSESSMENT
+     * ----------------------------------------------------------
+     */
+    return {
+      resumed: true,
+
+      session_id:
+        existingSession.session_id,
+
+      timer: {
+        duration_seconds:
+          INITIAL_ASSESSMENT_DURATION_MINUTES * 60,
+
+        deadline_at:
+          existingSession.deadline_at,
+
+        remaining_seconds:
+          remainingSeconds,
+      },
+
+      domain: {
+        domain_role_id:
+          user.domain_role_id,
+
+        domain_name:
+          user.domain_role,
+      },
+
+      assessment: assessmentMeta,
+
+      skill: {
+        skill_id:
+          currentSkill.skill_id,
+
+        skill_name:
+          currentSkill.skill.skill_name,
+      },
+
+      question:
+        toClientQuestion(currentQuestion),
+    };
+  }
+
+  /*
+   * ============================================================
+   * CREATE NEW ASSESSMENT
+   * ============================================================
+   */
+
+  const firstSkill = requiredSkills[0];
+
+  const questions =
+    await repo.questions.findBySkill(
+      firstSkill.skill_id
+    );
+
+  if (!questions.length) {
+    const error = new Error(
+      "No questions available for the first skill."
+    );
+
+    error.status = 404;
+    throw error;
+  }
+
+  const startTime = new Date();
+
+  const durationSeconds =
+    INITIAL_ASSESSMENT_DURATION_MINUTES * 60;
+
+  const deadlineAt = new Date(
+    startTime.getTime() +
+      INITIAL_ASSESSMENT_DURATION_MS
+  );
+
+  /*
+   * ----------------------------------------------------------
+   * CREATE SESSION
+   * ----------------------------------------------------------
+   */
+  const quizSession =
+    await repo.quizSessions.create({
       user_id: userId,
-      domain_role_id: user.domain_role_id,
-      current_skill_id: currentSkillEntry.skill_id,
+
+      domain_role_id:
+        user.domain_role_id,
+
+      start_time: startTime,
+
+      deadline_at: deadlineAt,
+
+      remaining_seconds:
+        durationSeconds,
+
+      paused_at: null,
+
       status: "In Progress",
+
+      total_questions:
+        totalQuestions,
+
       questions_answered: 0,
+
+      current_skill_id:
+        firstSkill.skill_id,
+
+      current_question_id: null,
     });
 
-    const stateResponse = await flaskService.createQuizState({
-      session_id: quizSession.session_id,
+  /*
+   * ----------------------------------------------------------
+   * CREATE FLASK ADAPTIVE STATE
+   * ----------------------------------------------------------
+   */
+  const stateResponse =
+    await flaskService.createQuizState({
+      session_id:
+        quizSession.session_id,
+
       skill: {
-        skill_id: currentSkillEntry.skill_id,
-        skill_name: currentSkillEntry.skill.skill_name,
+        skill_id:
+          firstSkill.skill_id,
+
+        skill_name:
+          firstSkill.skill.skill_name,
       },
     });
 
-    const state = stateResponse.state;
+  const state =
+    stateResponse.state;
 
-    await repo.quizStates.create({
-      session_id: quizSession.session_id,
-      skill_id: currentSkillEntry.skill_id,
-      current_difficulty: state.current_difficulty,
-      correct_streak: state.correct_streak,
-      wrong_streak: state.wrong_streak,
-      questions_answered: state.questions_answered,
-      obtained_score: state.obtained_score,
-      maximum_score: state.maximum_score,
-      state,
-    });
-  }
+  /*
+   * ----------------------------------------------------------
+   * SAVE QUIZ STATE
+   * ----------------------------------------------------------
+   */
+  await repo.quizStates.create({
+    session_id:
+      quizSession.session_id,
 
-  // --------------------------------------------------
-  // Load Quiz State
-  // --------------------------------------------------
-  const stateRow = await repo.quizStates.findById(
-    quizSession.session_id,
-    currentSkillEntry.skill_id
-  );
+    skill_id:
+      firstSkill.skill_id,
 
-  if (!stateRow || !stateRow.state) {
-    const error = new Error("Quiz state not found");
-    error.status = 404;
-    throw error;
-  }
+    current_difficulty:
+      state.current_difficulty,
 
-  const questions = await repo.questions.findBySkill(
-    currentSkillEntry.skill_id
-  );
+    correct_streak:
+      state.correct_streak,
 
-  const questionResponse = await flaskService.getNextQuestion({
-    state: stateRow.state,
-    questions,
+    wrong_streak:
+      state.wrong_streak,
+
+    questions_answered:
+      state.questions_answered,
+
+    obtained_score:
+      state.obtained_score,
+
+    maximum_score:
+      state.maximum_score,
+
+    state,
   });
 
+  /*
+   * ----------------------------------------------------------
+   * GET FIRST ADAPTIVE QUESTION
+   * ----------------------------------------------------------
+   */
+  const questionResponse =
+    await flaskService.getNextQuestion({
+      state,
+
+      questions,
+    });
+
   if (!questionResponse.question) {
-    const error = new Error("No questions available for this skill");
+    const error = new Error(
+      "No question available for this skill."
+    );
+
     error.status = 404;
     throw error;
   }
 
-  // --------------------------------------------------
-  // Assessment Metadata
-  // --------------------------------------------------
+  const firstQuestion =
+    questionResponse.question;
+
+  /*
+   * ----------------------------------------------------------
+   * IMPORTANT:
+   *
+   * Save the exact question being displayed.
+   *
+   * This is what allows us to resume on the
+   * exact same question.
+   * ----------------------------------------------------------
+   */
+  await repo.quizSessions.update(
+    quizSession.session_id,
+    {
+      current_question_id:
+        firstQuestion.question_id,
+    }
+  );
+
+  /*
+   * ----------------------------------------------------------
+   * ASSESSMENT META
+   * ----------------------------------------------------------
+   */
   const assessmentMeta = {
-    total_skills: requiredSkills.length,
+    total_skills:
+      requiredSkills.length,
+
     questions_per_skill: 10,
-    total_questions: requiredSkills.length * 10,
-    current_skill_index: requiredSkills.findIndex(
-      (skill) => skill.skill_id === currentSkillEntry.skill_id
-    ),
-    overall_question: (quizSession.questions_answered || 0) + 1,
+
+    total_questions:
+      totalQuestions,
+
+    current_skill_index: 0,
+
+    overall_question: 1,
+
     remaining_questions:
-      requiredSkills.length * 10 - ((quizSession.questions_answered || 0) + 1),
-    skills: requiredSkills.map((skill) => ({
-      skill_id: skill.skill_id,
-      skill_name: skill.skill.skill_name,
-      status:
-        skill.skill_id === currentSkillEntry.skill_id ? "current" : "upcoming",
-    })),
+      totalQuestions - 1,
+
+    skills:
+      requiredSkills.map(
+        (item, index) => ({
+          skill_id:
+            item.skill_id,
+
+          skill_name:
+            item.skill.skill_name,
+
+          index,
+
+          status:
+            index === 0
+              ? "current"
+              : "upcoming",
+        })
+      ),
   };
 
-  // --------------------------------------------------
-  // Response
-  // --------------------------------------------------
+  /*
+   * ----------------------------------------------------------
+   * RETURN NEW ASSESSMENT
+   * ----------------------------------------------------------
+   */
   return {
-    session_id: quizSession.session_id,
+    resumed: false,
+
+    session_id:
+      quizSession.session_id,
+
+    timer: {
+      duration_seconds:
+        durationSeconds,
+
+      deadline_at:
+        deadlineAt,
+
+      remaining_seconds:
+        durationSeconds,
+    },
+
     domain: {
-      domain_role_id: user.domain_role_id,
-      domain_name: user.domain_role,
+      domain_role_id:
+        user.domain_role_id,
+
+      domain_name:
+        user.domain_role,
     },
-    assessment: assessmentMeta,
+
+    assessment:
+      assessmentMeta,
+
     skill: {
-      skill_id: currentSkillEntry.skill_id,
-      skill_name: currentSkillEntry.skill.skill_name,
+      skill_id:
+        firstSkill.skill_id,
+
+      skill_name:
+        firstSkill.skill.skill_name,
     },
-    question: toClientQuestion(questionResponse.question),
+
+    question:
+      toClientQuestion(firstQuestion),
   };
 }
 
-// ---------------------------------------------------------------------
+async function pauseInitialAssessment(userId, sessionId) {
+  const quizSession =
+    await repo.quizSessions.findById(sessionId);
+
+  if (!quizSession) {
+    const error = new Error(
+      "Quiz session not found"
+    );
+
+    error.status = 404;
+    throw error;
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * VERIFY OWNERSHIP
+   * ----------------------------------------------------------
+   */
+  if (quizSession.user_id !== userId) {
+    const error = new Error(
+      "You are not authorized to access this quiz session"
+    );
+
+    error.status = 403;
+    throw error;
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * ALREADY COMPLETED
+   * ----------------------------------------------------------
+   */
+  if (quizSession.status === "Completed") {
+    const error = new Error(
+      "This assessment has already been completed."
+    );
+
+    error.status = 409;
+    throw error;
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * ALREADY TIMED OUT
+   * ----------------------------------------------------------
+   */
+  if (quizSession.status === "Timed Out") {
+    const error = new Error(
+      "This assessment has already expired."
+    );
+
+    error.status = 409;
+    throw error;
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * ALREADY PAUSED
+   *
+   * Make the endpoint idempotent.
+   *
+   * If React accidentally calls pause twice, we don't
+   * recalculate or destroy the saved remaining time.
+   * ----------------------------------------------------------
+   */
+  if (quizSession.status === "Paused") {
+    return {
+      paused: true,
+
+      session_id:
+        quizSession.session_id,
+
+      remaining_seconds:
+        Number(quizSession.remaining_seconds || 0),
+
+      paused_at:
+        quizSession.paused_at,
+
+      current_question_id:
+        quizSession.current_question_id,
+    };
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * ONLY "In Progress" CAN BE PAUSED
+   * ----------------------------------------------------------
+   */
+  if (quizSession.status !== "In Progress") {
+    const error = new Error(
+      "This assessment cannot be paused in its current state."
+    );
+
+    error.status = 409;
+    throw error;
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * TIMER MUST EXIST
+   * ----------------------------------------------------------
+   */
+  if (!quizSession.deadline_at) {
+    const error = new Error(
+      "Assessment timer information is missing."
+    );
+
+    error.status = 500;
+    throw error;
+  }
+
+  const now = new Date();
+
+  const deadlineTime =
+    new Date(
+      quizSession.deadline_at
+    ).getTime();
+
+  /*
+   * Calculate remaining time using SERVER TIME.
+   *
+   * The browser's timer is NOT trusted.
+   */
+  const remainingSeconds = Math.max(
+    0,
+    Math.floor(
+      (deadlineTime - now.getTime()) / 1000
+    )
+  );
+
+  /*
+   * ----------------------------------------------------------
+   * TIMER EXPIRED BEFORE PAUSE
+   * ----------------------------------------------------------
+   */
+  if (remainingSeconds <= 0) {
+    await repo.quizSessions.update(
+      sessionId,
+      {
+        status: "Timed Out",
+        end_time: now,
+        remaining_seconds: 0,
+        deadline_at: null,
+      }
+    );
+
+    const error = new Error(
+      "The assessment time has expired."
+    );
+
+    error.status = 409;
+    error.code =
+      "ASSESSMENT_TIME_EXPIRED";
+
+    throw error;
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * SAVE PAUSED STATE
+   * ----------------------------------------------------------
+   *
+   * Example:
+   *
+   * deadline = 10:30
+   * current time = 10:15
+   *
+   * remaining_seconds = 900
+   *
+   * We remove the old deadline because the assessment
+   * is no longer actively counting down.
+   */
+  await repo.quizSessions.update(
+    sessionId,
+    {
+      status: "Paused",
+
+      remaining_seconds:
+        remainingSeconds,
+
+      paused_at: now,
+
+      deadline_at: null,
+    }
+  );
+
+  return {
+    paused: true,
+
+    session_id:
+      quizSession.session_id,
+
+    remaining_seconds:
+      remainingSeconds,
+
+    paused_at: now,
+
+    current_question_id:
+      quizSession.current_question_id,
+  };
+}
+
+async function heartbeatInitialAssessment(userId, sessionId) {
+  const quizSession =
+    await repo.quizSessions.findById(sessionId);
+
+  if (!quizSession) {
+    const error = new Error(
+      "Quiz session not found"
+    );
+
+    error.status = 404;
+    throw error;
+  }
+
+  if (quizSession.user_id !== userId) {
+    const error = new Error(
+      "You are not authorized to access this quiz session"
+    );
+
+    error.status = 403;
+    throw error;
+  }
+
+  if (quizSession.status !== "In Progress") {
+    return {
+      active: false,
+      status: quizSession.status,
+      remaining_seconds: Number(
+        quizSession.remaining_seconds || 0
+      ),
+    };
+  }
+
+  if (!quizSession.deadline_at) {
+    const error = new Error(
+      "Assessment timer information is missing."
+    );
+
+    error.status = 500;
+    throw error;
+  }
+
+  const now = new Date();
+
+  const remainingSeconds = Math.max(
+    0,
+    Math.floor(
+      (
+        new Date(
+          quizSession.deadline_at
+        ).getTime() -
+        now.getTime()
+      ) / 1000
+    )
+  );
+
+  /*
+   * Timer expired.
+   */
+  if (remainingSeconds <= 0) {
+    await repo.quizSessions.update(
+      sessionId,
+      {
+        status: "Timed Out",
+        end_time: now,
+        remaining_seconds: 0,
+      }
+    );
+
+    const error = new Error(
+      "The assessment time has expired."
+    );
+
+    error.status = 409;
+    error.code =
+      "ASSESSMENT_TIME_EXPIRED";
+
+    throw error;
+  }
+
+  /*
+   * Keep the persisted value synchronized with the
+   * server-authoritative deadline.
+   */
+  await repo.quizSessions.update(
+    sessionId,
+    {
+      remaining_seconds:
+        remainingSeconds,
+    }
+  );
+
+  return {
+    active: true,
+
+    session_id:
+      sessionId,
+
+    remaining_seconds:
+      remainingSeconds,
+
+    deadline_at:
+      quizSession.deadline_at,
+
+    current_question_id:
+      quizSession.current_question_id,
+  };
+}
+
 // Submit one answer, advance state, and (when a skill finishes) roll
-// into the next skill or close out the assessment.
-// ---------------------------------------------------------------------
 async function submitInitialAssessmentAnswer(
   userId,
   sessionId,
@@ -188,6 +948,27 @@ async function submitInitialAssessmentAnswer(
     throw error;
   }
 
+  const now = new Date();
+
+  if (
+    quizSession.deadline_at &&
+    now >= new Date(quizSession.deadline_at)
+  ) {
+    await repo.quizSessions.update(sessionId, {
+      status: "Timed Out",
+      end_time: now,
+    });
+
+    const error = new Error(
+      "The assessment time has expired."
+    );
+
+    error.status = 409;
+    error.code = "ASSESSMENT_TIME_EXPIRED";
+
+    throw error;
+  }
+
   const skillId = quizSession.current_skill_id;
   if (!skillId) {
     const error = new Error(
@@ -211,6 +992,14 @@ async function submitInitialAssessmentAnswer(
     );
     error.status = 400;
     throw error;
+  }
+
+  if(quizSession.current_question_id !== questionId){
+    const error = new Error(
+      "This is not the current question"
+    );
+    error.status = 400;
+    throw error
   }
 
   const stateRow = await repo.quizStates.findById(sessionId, skillId);
@@ -297,6 +1086,19 @@ async function submitInitialAssessmentAnswer(
     const nextQuestionResponse = await flaskService.getNextQuestion({
       state: updatedState,
       questions,
+    });
+
+    if(!nextQuestionResponse.question){
+      const error = new Error(
+        "No next question is available"
+      );
+
+      error.status = 500;
+      throw error
+    }
+
+    await repo.quizSessions.update(sessionId, {
+      current_question_id: nextQuestionResponse.question.question_id,
     });
 
     return {
@@ -418,6 +1220,17 @@ async function submitInitialAssessmentAnswer(
     questions: nextQuestions,
   });
 
+  if(!firstQuestionResponse.question){
+    const error = new Error("No question available for the next skill")
+    error.status = 500;
+    throw error;
+  }
+
+  await repo.quizSessions.update(sessionId, {
+    current_skill_id: nextRequired.skill_id,
+    current_question_id: firstQuestionResponse.question.question_id,
+  });
+
   const nextAssessmentMeta = {
     total_skills: requiredSkills.length,
 
@@ -465,4 +1278,6 @@ async function submitInitialAssessmentAnswer(
 module.exports = {
   startInitialAssessment,
   submitInitialAssessmentAnswer,
+  pauseInitialAssessment,
+  heartbeatInitialAssessment
 };
