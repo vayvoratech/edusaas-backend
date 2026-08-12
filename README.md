@@ -101,3 +101,5 @@ prisma/
 ├── migrations/     versioned schema changes
 └── seed.js         run via `npm run db:seed:stage`
 ```
+## Development 
+Db connected successfully
