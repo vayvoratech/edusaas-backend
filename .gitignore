@@ -1,8 +1,9 @@
 node_modules
 .env
 .env.dev
-.env.stage
 .env.prod
+.env.qa
+.env.stage
 .env.local
 baseline_structure.sql
 *.log
