@@ -110,8 +110,21 @@ async function startInitialAssessment(userId) {
 
   /*
    * ============================================================
-   * RESUME EXISTING ASSESSMENT
+   * RESUME EXISTING ASSESSMENT (READ-ONLY W.R.T. THE TIMER)
    * ============================================================
+   *
+   * IMPORTANT — this function is called every time the page loads
+   * (InitialAssessment.js calls it on mount, before the student has
+   * clicked "Resume"/"Start", before the camera permission prompt,
+   * before proctoring has connected). It must NEVER start or restart
+   * the countdown itself, or the student loses real exam time just
+   * sitting on the "Resume Assessment" screen or waiting on a camera
+   * permission dialog.
+   *
+   * Flipping a "Paused" session back to "In Progress" (i.e. actually
+   * starting the deadline) only happens in activateInitialAssessment(),
+   * which the frontend calls at the exact moment the student clicks
+   * the Resume/Start button.
    */
   if (existingSession) {
     const now = new Date();
@@ -121,23 +134,10 @@ async function startInitialAssessment(userId) {
      * CASE 1: PAUSED SESSION
      * ----------------------------------------------------------
      *
-     * remaining_seconds is the authoritative remaining time.
-     *
-     * Example:
-     *
-     * Student stopped at 15:00 remaining.
-     *
-     * Database:
-     *   status = "Paused"
-     *   remaining_seconds = 900
-     *
-     * Student returns later.
-     *
-     * We create a NEW deadline:
-     *
-     *   now + 900 seconds
-     *
-     * Therefore the student gets exactly 15:00 again.
+     * remaining_seconds is the authoritative remaining time, and it
+     * is left completely untouched here. We only check whether it
+     * had already hit zero at the moment it was paused (edge case),
+     * we do NOT create a new deadline yet.
      */
     if (existingSession.status === "Paused") {
       const remainingSeconds =
@@ -166,22 +166,7 @@ async function startInitialAssessment(userId) {
         throw error;
       }
 
-      const newDeadline = new Date(
-        now.getTime() + remainingSeconds * 1000
-      );
-
-      await repo.quizSessions.update(
-        existingSession.session_id,
-        {
-          status: "In Progress",
-          deadline_at: newDeadline,
-          paused_at: null,
-        }
-      );
-
-      existingSession.status = "In Progress";
-      existingSession.deadline_at = newDeadline;
-      existingSession.paused_at = null;
+      existingSession.remaining_seconds = remainingSeconds;
     }
 
     /*
@@ -191,8 +176,12 @@ async function startInitialAssessment(userId) {
      *
      * Do NOT reset the timer.
      *
-     * The existing deadline remains authoritative.
+     * The existing deadline remains authoritative. This is a
+     * genuinely live session (e.g. the student refreshed the page
+     * mid-exam) — the clock correctly keeps counting down.
      */
+    let liveRemainingSeconds = null;
+
     if (existingSession.status === "In Progress") {
       if (!existingSession.deadline_at) {
         const error = new Error(
@@ -206,7 +195,7 @@ async function startInitialAssessment(userId) {
       const deadlineTime =
         new Date(existingSession.deadline_at).getTime();
 
-      const remainingSeconds = Math.max(
+      liveRemainingSeconds = Math.max(
         0,
         Math.floor(
           (deadlineTime - now.getTime()) / 1000
@@ -216,7 +205,7 @@ async function startInitialAssessment(userId) {
       /*
        * Server-side timeout check.
        */
-      if (remainingSeconds <= 0) {
+      if (liveRemainingSeconds <= 0) {
         await repo.quizSessions.update(
           existingSession.session_id,
           {
@@ -267,18 +256,16 @@ async function startInitialAssessment(userId) {
 
     /*
      * ----------------------------------------------------------
-     * CALCULATE CURRENT REMAINING TIME
+     * CURRENT REMAINING TIME (DISPLAY ONLY — NOT PERSISTED)
      * ----------------------------------------------------------
+     *
+     * Paused  -> use the stored remaining_seconds as-is.
+     * In Progress -> use the live countdown computed above.
      */
-    const remainingSeconds = Math.max(
-      0,
-      Math.floor(
-        (
-          new Date(existingSession.deadline_at).getTime() -
-          now.getTime()
-        ) / 1000
-      )
-    );
+    const remainingSeconds =
+      existingSession.status === "Paused"
+        ? Number(existingSession.remaining_seconds)
+        : liveRemainingSeconds;
 
     /*
      * ----------------------------------------------------------
@@ -423,15 +410,18 @@ async function startInitialAssessment(userId) {
   const durationSeconds =
     INITIAL_ASSESSMENT_DURATION_MINUTES * 60;
 
-  const deadlineAt = new Date(
-    startTime.getTime() +
-      INITIAL_ASSESSMENT_DURATION_MS
-  );
-
   /*
    * ----------------------------------------------------------
-   * CREATE SESSION
+   * CREATE SESSION — STARTS "Paused", NOT "In Progress"
    * ----------------------------------------------------------
+   *
+   * The clock does not start here. This call happens on page load,
+   * before the student has granted camera permission or clicked
+   * "Start Assessment". We create the session and the first question
+   * up front (that work is independent of the timer), but leave the
+   * deadline unset. activateInitialAssessment() sets the real
+   * deadline the moment the student actually clicks Start — see the
+   * note above CASE 1 for why.
    */
   const quizSession =
     await repo.quizSessions.create({
@@ -442,14 +432,14 @@ async function startInitialAssessment(userId) {
 
       start_time: startTime,
 
-      deadline_at: deadlineAt,
+      deadline_at: null,
 
       remaining_seconds:
         durationSeconds,
 
-      paused_at: null,
+      paused_at: startTime,
 
-      status: "In Progress",
+      status: "Paused",
 
       total_questions:
         totalQuestions,
@@ -614,8 +604,7 @@ async function startInitialAssessment(userId) {
       duration_seconds:
         durationSeconds,
 
-      deadline_at:
-        deadlineAt,
+      deadline_at: null,
 
       remaining_seconds:
         durationSeconds,
@@ -642,6 +631,145 @@ async function startInitialAssessment(userId) {
 
     question:
       toClientQuestion(firstQuestion),
+  };
+}
+
+/*
+ * ============================================================
+ * ACTIVATE (START/RESUME) THE ASSESSMENT TIMER
+ * ============================================================
+ *
+ * This is the ONLY place the countdown deadline is ever set. The
+ * frontend calls this at the exact moment the student clicks the
+ * "Start/Resume Assessment" button — after that, it immediately
+ * connects proctoring, which itself requires status "In Progress"
+ * (see proctoringGateway.js), so this must run before that call.
+ *
+ * Idempotent: calling it again while already "In Progress" just
+ * returns the live remaining time without resetting the deadline
+ * (no free extra time from double-clicks or reconnects).
+ */
+async function activateInitialAssessment(userId, sessionId) {
+  const quizSession =
+    await repo.quizSessions.findById(sessionId);
+
+  if (!quizSession) {
+    const error = new Error("Quiz session not found");
+    error.status = 404;
+    throw error;
+  }
+
+  if (quizSession.user_id !== userId) {
+    const error = new Error(
+      "You are not authorized to access this quiz session"
+    );
+    error.status = 403;
+    throw error;
+  }
+
+  if (quizSession.status === "Completed") {
+    const error = new Error(
+      "This assessment has already been completed."
+    );
+    error.status = 409;
+    throw error;
+  }
+
+  if (quizSession.status === "Terminated") {
+    const error = new Error(
+      "This assessment has been terminated and cannot be restarted."
+    );
+    error.status = 409;
+    throw error;
+  }
+
+  if (quizSession.status === "Timed Out") {
+    const error = new Error(
+      "This assessment has already expired."
+    );
+    error.status = 409;
+    error.code = "ASSESSMENT_TIME_EXPIRED";
+    throw error;
+  }
+
+  const now = new Date();
+
+  // Already ticking (e.g. a reconnect/double-click) — don't touch
+  // the deadline, just report the live remaining time.
+  if (quizSession.status === "In Progress") {
+    if (!quizSession.deadline_at) {
+      const error = new Error(
+        "Assessment timer information is missing."
+      );
+      error.status = 500;
+      throw error;
+    }
+
+    const remainingSeconds = Math.max(
+      0,
+      Math.floor(
+        (new Date(quizSession.deadline_at).getTime() - now.getTime()) / 1000
+      )
+    );
+
+    if (remainingSeconds <= 0) {
+      await repo.quizSessions.update(sessionId, {
+        status: "Timed Out",
+        end_time: now,
+        remaining_seconds: 0,
+      });
+
+      const error = new Error("The assessment time has expired.");
+      error.status = 409;
+      error.code = "ASSESSMENT_TIME_EXPIRED";
+      throw error;
+    }
+
+    return {
+      activated: true,
+      session_id: sessionId,
+      remaining_seconds: remainingSeconds,
+      deadline_at: quizSession.deadline_at,
+    };
+  }
+
+  if (quizSession.status !== "Paused") {
+    const error = new Error(
+      "This assessment cannot be started in its current state."
+    );
+    error.status = 409;
+    throw error;
+  }
+
+  const remainingSeconds = Number(quizSession.remaining_seconds);
+
+  if (!Number.isInteger(remainingSeconds) || remainingSeconds <= 0) {
+    await repo.quizSessions.update(sessionId, {
+      status: "Timed Out",
+      end_time: now,
+      remaining_seconds: 0,
+    });
+
+    const error = new Error("The assessment time has expired.");
+    error.status = 409;
+    error.code = "ASSESSMENT_TIME_EXPIRED";
+    throw error;
+  }
+
+  // This is the moment the exam clock actually starts.
+  const newDeadline = new Date(now.getTime() + remainingSeconds * 1000);
+
+  await repo.quizSessions.update(sessionId, {
+    status: "In Progress",
+    deadline_at: newDeadline,
+    paused_at: null,
+  });
+
+  return {
+    activated: true,
+    session_id: sessionId,
+    remaining_seconds: remainingSeconds,
+    deadline_at: newDeadline,
   };
 }
 
@@ -1313,6 +1441,7 @@ async function submitInitialAssessmentAnswer(
 
 module.exports = {
   startInitialAssessment,
+  activateInitialAssessment,
   submitInitialAssessmentAnswer,
   pauseInitialAssessment,
   heartbeatInitialAssessment

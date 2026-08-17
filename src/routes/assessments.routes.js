@@ -1,3 +1,5 @@
+
+
 const express = require("express");
 const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
@@ -120,6 +122,44 @@ router.post("/initial-quiz/start", authRequired, async (req, res, next) => {
     );
 
     return res.status(201).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/initial-quiz/activate", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can start the initial quiz.",
+      });
+    }
+
+    const { session_id } = req.body || {};
+
+    if (session_id === undefined) {
+      return res.status(400).json({
+        error: "session_id is required.",
+      });
+    }
+
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result = await assessmentService.activateInitialAssessment(
+      req.user.sub,
+      sessionId
+    );
+
+    return res.status(200).json({
       success: true,
       data: result,
     });
