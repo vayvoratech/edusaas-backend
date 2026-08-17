@@ -1,4 +1,5 @@
-// Canonical RBAC catalog. Edit here, then run the seed/dataStore restart to apply.
+//Canonical RBAC catalog
+// Edit here, then run the appropriate RBAC seed/restart process to apply changes.
 // Names follow "resource:action" convention.
 
 const PERMISSIONS = [

@@ -34,6 +34,7 @@ const communityRoutes = require("./src/routes/community.routes");
 
 // Import error handling middleware
 const { notFound, errorHandler } = require("./src/middleware/errorHandler");
+const { attachProctoringGateway } = require("./src/services/proctoringGateway");
 
 // Initialize the Express application
 const app = express();
@@ -93,8 +94,10 @@ app.use(notFound);
 app.use(errorHandler);
 
 // Start the server and listen on the configured port
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`[env] APP_ENV=${appEnv}`);
   console.log(`EDU-SAAS backend running at http://localhost:${port}`);
   console.log(`Swagger docs:           http://localhost:${port}/api-docs`);
 });
+
+attachProctoringGateway(server)

@@ -70,7 +70,43 @@ async function startInitialAssessment(userId) {
    * Completed / Timed Out sessions are NOT returned.
    */
   const existingSession =
-    await repo.quizSessions.findActiveByUser(userId);
+    await repo.quizSessions.findLatestByUser(userId);
+
+  // Terminal state - do not create new session
+    if (existingSession) {
+      if (existingSession.status === "Completed") {
+        const error = new Error(
+          "This assessment has already been completed."
+        );
+
+        error.status = 409;
+        error.code = "ASSESSMENT_ALREADY_COMPLETED";
+
+        throw error;
+      }
+
+      if (existingSession.status === "Terminated") {
+        const error = new Error(
+          "This assessment has been terminated and cannot be restarted."
+        );
+
+        error.status = 409;
+        error.code = "ASSESSMENT_TERMINATED";
+
+        throw error;
+      }
+
+      if (existingSession.status === "Timed Out") {
+        const error = new Error(
+          "This assessment has already expired."
+        );
+
+        error.status = 409;
+        error.code = "ASSESSMENT_TIME_EXPIRED";
+
+        throw error;
+      }
+    }
 
   /*
    * ============================================================

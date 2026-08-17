@@ -31,7 +31,6 @@ module.exports = {
   process.env.JWT_REFRESH_EXPIRES_IN || "7d",
 
   databaseUrl: process.env.DATABASE_URL || "",
-  useDb: (process.env.USE_DB || "").toLowerCase() === "true",
 
   smtpUser: process.env.SMTP_USER || "",
   smtpPass: process.env.SMTP_PASS || "",
