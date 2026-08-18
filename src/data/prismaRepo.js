@@ -627,34 +627,9 @@ module.exports = {
   },
 
   reports: {
-    list: async () => (await prisma.report.findMany({ orderBy: { generated_at: "desc" } })).map(mapReportRow),
-    listExports: async () =>
-      (await prisma.report.findMany({
-        where: { exported_at: { not: null } }, orderBy: { exported_at: "desc" },
-      })).map(mapReportRow),
-    summary: async () => {
-      const [totalReports, users, profiles] = await Promise.all([
-        prisma.report.count(), prisma.user.count(), prisma.profile.count(),
-      ]);
-      const accuracy = users ? Math.round((profiles / users) * 100) : 98;
-      return {
-        totalReports, activeAlerts: 5,
-        dataAccuracy: accuracy >= 90 ? accuracy : 98,
-        courseEngagement: [
-          { month: "Jan", completions: 30, dropouts: 8 },
-          { month: "Feb", completions: 36, dropouts: 10 },
-          { month: "Mar", completions: 42, dropouts: 7 },
-          { month: "Apr", completions: 50, dropouts: 6 },
-          { month: "May", completions: 58, dropouts: 5 },
-          { month: "Jun", completions: 65, dropouts: 4 },
-        ],
-        userEngagement: [
-          { channel: "Logins", value: 580 }, { channel: "Sessions", value: 480 },
-          { channel: "Forum Posts", value: 220 }, { channel: "Messages", value: 140 },
-        ],
-        systemUptime: 99.8,
-      };
-    },
+    list: async () => [],
+    listExports: async () => [],
+    summary: async () => {}
   },
 
   settings: {
@@ -1184,66 +1159,71 @@ module.exports = {
       },
     }),
 
+    findLatestByUser: async (user_id) =>
+      prisma.quizSession.findFirst({
+        where: {
+          user_id,
+        },
+        include: {
+          domainRole: true,
+        },
+        orderBy: {
+          start_time: "desc",
+        },
+      }),
+
     findActiveByUser: async (user_id) =>
-  prisma.quizSession.findFirst({
-    where: {
-      user_id,
-      status: "In Progress",
-    },
-    include: {
-      domainRole: true,
-    },
-    orderBy: {
-      start_time: "desc",
-    },
-  }),
-
-findCompletedByUser: async (user_id) =>
-  prisma.quizSession.findFirst({
-    where: {
-      user_id,
-      status: "Completed",
-    },
-    include: {
-      domainRole: true,
-    },
-    orderBy: {
-      start_time: "desc",
-    },
-  }),
-
-  create: async (data) => {
-  try {
-    return await prisma.quizSession.create({
-      data,
+    prisma.quizSession.findFirst({
+      where: {
+        user_id,
+        status: {
+          in: ["In Progress", "Paused"],
+        },
+      },
       include: {
         domainRole: true,
       },
-    });
-  } catch (err) {
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
 
-    // Another request already created the active session
-    if (err.code === "P2002") {
+  findCompletedByUser: async (user_id) =>
+    prisma.quizSession.findFirst({
+      where: {
+        user_id,
+        status: "Completed",
+      },
+      include: {
+        domainRole: true,
+      },
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
 
-      const existing =
-        await prisma.quizSession.findFirst({
-          where: {
-            user_id: data.user_id,
-            status: "In Progress",
-          },
-          include: {
-            domainRole: true,
-          },
-        });
-
-      if (existing) {
-        return existing;
-      }
-    }
-
-    throw err;
-  }
- },
+   create: async (data) => {
+      return prisma.quizSession.create({
+        data,
+        include: {
+          domainRole: true,
+        },
+      });
+    },
+  
+  findActiveWithResumeData: async (user_id) =>
+    prisma.quizSession.findFirst({
+      where: {
+        user_id,
+        status: "In Progress",
+      },
+      include: {
+        domainRole: true,
+      },
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
 
   update: async (session_id, data) =>
     safeQuery(
@@ -1265,6 +1245,30 @@ findCompletedByUser: async (user_id) =>
         })
       )
     ),
+  },
+
+  proctoringEvents: {
+    create: async (data) =>
+      prisma.proctoring_events.create({
+        data,
+      }),
+
+    listBySessionId: async (session_id) =>
+      prisma.proctoring_events.findMany({
+        where: {
+          session_id,
+        },
+        orderBy: {
+          created_at: "asc",
+        },
+      }),
+
+    findById: async (event_id) =>
+      prisma.proctoring_events.findUnique({
+        where: {
+          event_id,
+        },
+      }),
   },
 
   studentAnswers: {
@@ -1676,60 +1680,117 @@ findCompletedByUser: async (user_id) =>
   },
 
   insights: async () => {
-    const [users, courses, enrollments, jobs, applications, assessments] = await Promise.all([
-      prisma.user.count(), prisma.course.count(), prisma.enrollment.count(),
-      prisma.job.count(), prisma.application.count(), prisma.assessment.findMany(),
-    ]);
-    const avgScore = assessments.length === 0
-      ? 0
-      : Math.round(assessments.reduce((s, a) => s + a.score, 0) / assessments.length);
+    const [users, courses, enrollments, jobs, applications, assessments] =
+      await Promise.all([
+        prisma.user.count(),
+        prisma.course.count(),
+        prisma.enrollment.count(),
+        prisma.job.count(),
+        prisma.application.count(),
+        prisma.assessment.findMany(),
+      ]);
+
+    const avgScore =
+      assessments.length === 0
+        ? 0
+        : Math.round(
+            assessments.reduce((s, a) => s + a.score, 0) /
+              assessments.length
+          );
+
     return {
-      totals: { users, courses, enrollments, jobs, applications },
-      assessments: { count: assessments.length, average_score: avgScore },
-      top_missing_skills: ["communication", "advanced-react", "system-design"],
+      totals: {
+        users,
+        courses,
+        enrollments,
+        jobs,
+        applications,
+      },
+      assessments: {
+        count: assessments.length,
+        average_score: avgScore,
+      },
+      top_missing_skills: [],
     };
   },
 
   educatorInsights: async (educator_id) => {
-    const courses = await prisma.course.findMany({ where: { educator_id } });
+    const courses = await prisma.course.findMany({where: { educator_id },});
     const courseIds = courses.map((c) => c.id);
-    const enrollments = await prisma.enrollment.findMany({ where: { course_id: { in: courseIds } } });
-    const learners = new Set(enrollments.map((e) => e.user_id));
-    const avgCompletion = enrollments.length === 0
-      ? 0
-      : Math.round(enrollments.reduce((s, e) => s + (e.completion_percentage || 0), 0) / enrollments.length);
+    const enrollments =
+      courseIds.length === 0
+        ? []
+        : await prisma.enrollment.findMany({
+            where: {
+              course_id: {
+                in: courseIds,
+              },
+            },
+          });
+
+    const learners = new Set(
+      enrollments.map((e) => e.user_id)
+    );
+
+    const avgCompletion =
+      enrollments.length === 0
+        ? 0
+        : Math.round(
+            enrollments.reduce(
+              (sum, e) => sum + (e.completion_percentage || 0),
+              0
+            ) / enrollments.length
+          );
+
     return {
       enrolledLearners: learners.size,
-      activeCourses: courses.filter((c) => c.status === "active").length,
-      avgCompletion, avgRating: 4.6, courseRatings: 235,
-      learnerProficiency: { basic: 23, intermediate: 45, advanced: 32 },
-      skillGapAnalysis: [
-        { skill: "Technical Skills", value: 80 }, { skill: "Communication", value: 60 },
-        { skill: "Critical Thinking", value: 70 }, { skill: "Engagement", value: 55 },
-      ],
-      learnerPerformance: [
-        { week: "Week 1", technical: 50, engagement: 30 },
-        { week: "Week 2", technical: 70, engagement: 50 },
-        { week: "Week 3", technical: 65, engagement: 55 },
-        { week: "Week 4", technical: 85, engagement: 75 },
-      ],
+
+      activeCourses: courses.filter(
+        (c) => c.status === "active"
+      ).length,
+
+      avgCompletion,
+
+      // Not implemented yet — do not return fabricated values.
+      avgRating: null,
+      courseRatings: 0,
+
+      learnerProficiency: {
+        basic: 0,
+        intermediate: 0,
+        advanced: 0,
+      },
+
+      skillGapAnalysis: [],
+
+      learnerPerformance: [],
     };
   },
 
   employerInsights: async (employer_id) => {
-    const jobs = await prisma.job.findMany({ where: { employer_id } });
+    const jobs = await prisma.job.findMany({ where: { employer_id }, });
     const jobIds = jobs.map((j) => j.id);
-    const apps = await prisma.application.findMany({ where: { job_id: { in: jobIds } } });
-    const topMatches = apps.filter((a) => (a.skill_match || 0) >= 80).length;
+    const apps =
+      jobIds.length === 0
+        ? [] : await prisma.application.findMany({where: {job_id: {in: jobIds,},},});
+
+    const topMatches = apps.filter(
+      (a) => (a.skill_match || 0) >= 80
+    ).length;
+
     return {
-      jobOpenings: jobs.filter((j) => j.status === "open").length,
-      newApplicants: apps.length, topMatches,
-      candidateMatches: { strong: 40, good: 35, possible: 25 },
-      skillsInsights: [
-        { skill: "UI/UX Design", value: 80 },
-        { skill: "Data Readiness", value: 65 },
-        { skill: "Digital Marketing", value: 55 },
-      ],
+      jobOpenings: jobs.filter(
+        (j) => j.status === "open"
+      ).length,
+      newApplicants: apps.length,
+      topMatches,
+      // Not implemented yet — do not return fabricated values.
+      candidateMatches: {
+        strong: 0,
+        good: 0,
+        possible: 0,
+      },
+      skillsInsights: [],
     };
   },
 
@@ -2117,5 +2178,5 @@ findCompletedByUser: async (user_id) =>
     recentActivity,
     learningAnalytics,
     };
-   },
+  },
 };

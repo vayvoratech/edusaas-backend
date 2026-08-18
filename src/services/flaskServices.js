@@ -5,16 +5,16 @@
 // payloads to Python and returns whatever Python computes. All persistence
 // happens in assessmentService.js using the Prisma repo.
 //
-// IMPORTANT: FLASK_BASE_URL must point at wherever `python app.py` is
-// actually running. Flask's default (app.run(debug=True)) is port 5000.
-// Either set FLASK_BASE_URL=http://127.0.0.1:5000 in your .env, or change
+// IMPORTANT: AIML_BASE_URL must point at wherever `python app.py` is
+// actually running. Flask's default (app.run(debug=True)) is port 5001.
+// Either set AIML_BASE_URL=http://127.0.0.1:5001 in your .env, or change
 // app.run(port=5001) on the Python side — just make sure they match.
 
-const FLASK_BASE_URL =
-  process.env.FLASK_BASE_URL || "http://127.0.0.1:5001";
+const AIML_BASE_URL =
+  process.env.AIML_BASE_URL || "http://127.0.0.1:5001";
 
 async function callFlask(endpoint, payload) {
-  const response = await fetch(`${FLASK_BASE_URL}${endpoint}`, {
+  const response = await fetch(`${AIML_BASE_URL}${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
