@@ -538,67 +538,14 @@ async function startInitialAssessment(userId) {
     throw error;
   }
 
-  // --------------------------------------------------
-  // Assessment Metadata
-  // --------------------------------------------------
+ 
   
-const currentSkillIndex = requiredSkills.findIndex(
-  (skill) => skill.skill_id === currentSkillEntry.skill_id
-);
-
-const assessmentMeta = {
-  total_skills: requiredSkills.length,
-
-  questions_per_skill: 10,
-
-  total_questions: requiredSkills.length * 10,
-
-  current_skill_index: currentSkillIndex,
-
-  overall_question:
-    (quizSession.questions_answered || 0) + 1,
-
-  remaining_questions:
-    requiredSkills.length * 10 -
-    ((quizSession.questions_answered || 0) + 1),
-
-  skills: requiredSkills.map((skill, index) => ({
-    skill_id: skill.skill_id,
-
-    skill_name: skill.skill.skill_name,
-
-    status:
-      index < currentSkillIndex
-        ? "completed"
-        : index === currentSkillIndex
-        ? "current"
-        : "upcoming",
-  })),
-};
-
 // --------------------------------------------------
 // Response
 // --------------------------------------------------
 
-return {
-  session_id: quizSession.session_id,
+  
 
-  domain: {
-    domain_role_id: user.domain_role_id,
-    domain_name: user.domain_role,
-  },
-
-  assessment: assessmentMeta,
-
-  skill: {
-    skill_id: currentSkillEntry.skill_id,
-    skill_name: currentSkillEntry.skill.skill_name,
-  },
-
-  question: toClientQuestion(questionResponse.question),
-};
-}
-// ---------------------------------------------------------------------
   const firstQuestion =
     questionResponse.question;
 
@@ -1336,6 +1283,7 @@ requiredSkills.sort((a, b) => {
       : "upcoming",
   })),
 };
+
 
   // Skill not finished yet — just hand back the next question
   if (!result.skill_completed) {
