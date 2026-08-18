@@ -8,7 +8,7 @@ function toClientQuestion(question) {
   if (!question) return null;
   const { correct_option, ...rest } = question;
   return rest;
-}
+} 
 
 // ---------------------------------------------------------------------
 // Start the initial adaptive assessment
@@ -22,35 +22,98 @@ async function startInitialAssessment(userId) {
     throw error;
   }
 
+  // Prevent starting a new assessment after completion
+  const profile = await repo.profiles.findByUserId(userId);
+
+  if (profile?.initial_assessment_completed === true) {
+    const error = new Error("Initial assessment already completed");
+    error.status = 409;
+    throw error;
+  }
+
   if (!user.domain_role_id) {
     const error = new Error("Student has not selected a domain role");
     error.status = 400;
     throw error;
   }
+ 
 
-  const requiredSkills = await repo.domainRequiredSkills.findByDomainRoleId(
-    user.domain_role_id
+  const requiredSkills =
+    await repo.domainRequiredSkills.findByDomainRoleId(
+      user.domain_role_id
+    );
+    
+    
+    if (!requiredSkills.length) {
+  const error = new Error(
+    "No skills configured for the selected domain"
   );
+  error.status = 404;
+  throw error;
+}
+    const skillOrder = [
+  "Python",
+  "SQL",
+  "Machine Learning",
+  "Deep Learning",
+  "Git",
+];
 
-  if (!requiredSkills.length) {
-    const error = new Error("No skills configured for the selected domain");
-    error.status = 404;
-    throw error;
-  }
+requiredSkills.sort((a, b) => {
+  const indexA = skillOrder.indexOf(a.skill.skill_name);
+  const indexB = skillOrder.indexOf(b.skill.skill_name);
 
-  let quizSession = await repo.quizSessions.findActiveByUser(userId);
+  return (
+    (indexA === -1 ? 999 : indexA) -
+    (indexB === -1 ? 999 : indexB)
+  );
+});
+
+  
+  let quizSession =
+    await repo.quizSessions.findActiveByUser(userId);
 
   let currentSkillEntry;
+   
 
   // --------------------------------------------------
   // Resume Existing Session
   // --------------------------------------------------
-  if (quizSession) {
-    currentSkillEntry =
-      requiredSkills.find(
-        (skill) => skill.skill_id === quizSession.current_skill_id
-      ) || requiredSkills[0];
+ if (quizSession) {
+  currentSkillEntry =
+    requiredSkills.find(
+      (skill) => skill.skill_id === quizSession.current_skill_id
+    ) || requiredSkills[0];
+
+  const existingState = await repo.quizStates.findById(
+    quizSession.session_id,
+    currentSkillEntry.skill_id
+  );
+
+  if (!existingState) {
+    const stateResponse = await flaskService.createQuizState({
+      session_id: quizSession.session_id,
+      skill: {
+        skill_id: currentSkillEntry.skill_id,
+        skill_name: currentSkillEntry.skill.skill_name,
+      },
+    });
+
+    const state = stateResponse.state;
+
+    await repo.quizStates.create({
+      session_id: quizSession.session_id,
+      skill_id: currentSkillEntry.skill_id,
+      current_difficulty: state.current_difficulty,
+      correct_streak: state.correct_streak,
+      wrong_streak: state.wrong_streak,
+      questions_answered: state.questions_answered,
+      obtained_score: state.obtained_score,
+      maximum_score: state.maximum_score,
+      state,
+    });
   }
+}
   // --------------------------------------------------
   // Start New Session
   // --------------------------------------------------
@@ -120,42 +183,63 @@ async function startInitialAssessment(userId) {
   // --------------------------------------------------
   // Assessment Metadata
   // --------------------------------------------------
-  const assessmentMeta = {
-    total_skills: requiredSkills.length,
-    questions_per_skill: 10,
-    total_questions: requiredSkills.length * 10,
-    current_skill_index: requiredSkills.findIndex(
-      (skill) => skill.skill_id === currentSkillEntry.skill_id
-    ),
-    overall_question: (quizSession.questions_answered || 0) + 1,
-    remaining_questions:
-      requiredSkills.length * 10 - ((quizSession.questions_answered || 0) + 1),
-    skills: requiredSkills.map((skill) => ({
-      skill_id: skill.skill_id,
-      skill_name: skill.skill.skill_name,
-      status:
-        skill.skill_id === currentSkillEntry.skill_id ? "current" : "upcoming",
-    })),
-  };
+  
+const currentSkillIndex = requiredSkills.findIndex(
+  (skill) => skill.skill_id === currentSkillEntry.skill_id
+);
 
-  // --------------------------------------------------
-  // Response
-  // --------------------------------------------------
-  return {
-    session_id: quizSession.session_id,
-    domain: {
-      domain_role_id: user.domain_role_id,
-      domain_name: user.domain_role,
-    },
-    assessment: assessmentMeta,
-    skill: {
-      skill_id: currentSkillEntry.skill_id,
-      skill_name: currentSkillEntry.skill.skill_name,
-    },
-    question: toClientQuestion(questionResponse.question),
-  };
+const assessmentMeta = {
+  total_skills: requiredSkills.length,
+
+  questions_per_skill: 10,
+
+  total_questions: requiredSkills.length * 10,
+
+  current_skill_index: currentSkillIndex,
+
+  overall_question:
+    (quizSession.questions_answered || 0) + 1,
+
+  remaining_questions:
+    requiredSkills.length * 10 -
+    ((quizSession.questions_answered || 0) + 1),
+
+  skills: requiredSkills.map((skill, index) => ({
+    skill_id: skill.skill_id,
+
+    skill_name: skill.skill.skill_name,
+
+    status:
+      index < currentSkillIndex
+        ? "completed"
+        : index === currentSkillIndex
+        ? "current"
+        : "upcoming",
+  })),
+};
+
+// --------------------------------------------------
+// Response
+// --------------------------------------------------
+
+return {
+  session_id: quizSession.session_id,
+
+  domain: {
+    domain_role_id: user.domain_role_id,
+    domain_name: user.domain_role,
+  },
+
+  assessment: assessmentMeta,
+
+  skill: {
+    skill_id: currentSkillEntry.skill_id,
+    skill_name: currentSkillEntry.skill.skill_name,
+  },
+
+  question: toClientQuestion(questionResponse.question),
+};
 }
-
 // ---------------------------------------------------------------------
 // Submit one answer, advance state, and (when a skill finishes) roll
 // into the next skill or close out the assessment.
@@ -266,29 +350,52 @@ async function submitInitialAssessmentAnswer(
   const requiredSkills = await repo.domainRequiredSkills.findByDomainRoleId(
     quizSession.domain_role_id
   );
+
+  const skillOrder = [
+  "Python",
+  "SQL",
+  "Machine Learning",
+  "Deep Learning",
+  "Git",
+];
+
+requiredSkills.sort((a, b) => {
+  const indexA = skillOrder.indexOf(a.skill.skill_name);
+  const indexB = skillOrder.indexOf(b.skill.skill_name);
+
+  return indexA - indexB;
+});
   const completedResults = await repo.studentSkillResults.findBySessionId(
     sessionId
   );
   const completedSkillIds = new Set(completedResults.map((r) => r.skill_id));
 
   const assessmentMeta = {
-    total_skills: requiredSkills.length,
-    questions_per_skill: 10,
-    total_questions: requiredSkills.length * 10,
-    current_skill_index: completedResults.length,
-    overall_question: (quizSession.questions_answered || 0) + 1,
-    remaining_questions:
-      requiredSkills.length * 10 - ((quizSession.questions_answered || 0) + 1),
-    skills: requiredSkills.map((item) => ({
-      skill_id: item.skill_id,
-      skill_name: item.skill.skill_name,
-      status: completedSkillIds.has(item.skill_id)
-        ? "completed"
-        : item.skill_id === quizSession.current_skill_id
-        ? "current"
-        : "upcoming",
-    })),
-  };
+  total_skills: requiredSkills.length,
+  questions_per_skill: 10,
+  total_questions: requiredSkills.length * 10,
+
+  current_skill_index: requiredSkills.findIndex(
+    (skill) => skill.skill_id === quizSession.current_skill_id
+  ),
+
+  overall_question: (quizSession.questions_answered || 0) + 1,
+
+  remaining_questions:
+    requiredSkills.length * 10 -
+    ((quizSession.questions_answered || 0) + 1),
+
+  skills: requiredSkills.map((item) => ({
+    skill_id: item.skill_id,
+    skill_name: item.skill.skill_name,
+
+    status: completedSkillIds.has(item.skill_id)
+      ? "completed"
+      : item.skill_id === quizSession.current_skill_id
+      ? "current"
+      : "upcoming",
+  })),
+};
 
   // Skill not finished yet — just hand back the next question
   if (!result.skill_completed) {
@@ -332,7 +439,7 @@ async function submitInitialAssessmentAnswer(
     percentage: score.percentage,
     skill_level: score.skill_level,
   });
-  completedSkillIds.add(skillId),
+  completedSkillIds.add(skillId);
   completedResults.push({
     skill_id: skillId
   })
@@ -346,15 +453,20 @@ async function submitInitialAssessmentAnswer(
   // Nothing left — assessment complete. This is the trigger point for
   // Skill Gap Analysis (Assessment Completed -> Load Results -> Load
   // Required Skills -> Python Skill Gap Engine -> ... -> Report).
-  if (!nextRequired) {
-    await repo.quizSessions.update(sessionId, {
-      status: "Completed",
-      end_time: new Date(),
-    });
+ if (!nextRequired) {
+  await repo.quizSessions.update(sessionId, {
+    status: "Completed",
+    end_time: new Date(),
+  });
 
-    const allResults = await repo.studentSkillResults.findBySessionId(
-      sessionId
-    );
+  await repo.profiles.upsert(userId, {
+    initial_assessment_completed: true,
+  });
+
+  const allResults = await repo.studentSkillResults.findBySessionId(
+    sessionId
+  );
+
 
     // Quiz's own readiness metric: average % correct across skills.
     // NOT the same number as the skill-gap engine's readiness_score
@@ -436,17 +548,16 @@ async function submitInitialAssessmentAnswer(
       ((quizSession.questions_answered || 0) + 1),
 
     skills: requiredSkills.map((item) => ({
-      skill_id: item.skill_id,
+  skill_id: item.skill_id,
+  skill_name: item.skill.skill_name,
 
-      skill_name: item.skill.skill_name,
-
-      status:
-        item.skill_id === skillId
-          ? "completed"
-          : item.skill_id === nextRequired.skill_id
-          ? "current"
-          : "upcoming",
-    })),
+  status:
+    completedSkillIds.has(item.skill_id)
+      ? "completed"
+      : item.skill_id === nextRequired.skill_id
+      ? "current"
+      : "upcoming",
+})),
   };
 
   return {
@@ -465,4 +576,4 @@ async function submitInitialAssessmentAnswer(
 module.exports = {
   startInitialAssessment,
   submitInitialAssessmentAnswer,
-};
+}; 

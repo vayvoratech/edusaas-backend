@@ -3,6 +3,20 @@ const crypto = require("crypto");
 
 const prisma = new PrismaClient();
 
+const userInclude = {
+  role: {
+    include: {
+      permissions: {
+        include: {
+          permission: true,
+        },
+      },
+    },
+  },
+  domainRole: true,
+  profile: true,
+};
+
 const iso = (d) => (d instanceof Date ? d.toISOString() : d);
 
 // Buckets records into the last 4 rolling 7-day windows (Week 1 = oldest, Week 4 = most
@@ -130,19 +144,7 @@ function learningProgressByEnrollment(
 
   // User rows are always fetched with role + role.permissions included so we can
   // expose `role` (name) and `permissions[]` to callers.
-  const userInclude = {
-        role: {
-            include: {
-                permissions: {
-                    include: {
-                        permission: true
-                    }
-                }
-            }
-        },
-
-        domainRole: true,
-    };
+  
 
   const mapUser = (u) =>
       u && {
@@ -1287,7 +1289,7 @@ findCompletedByUser: async (user_id) =>
       },
     }),
 
-  findBySessionId: async (sessionId) =>
+  Id: async (sessionId) =>
     prisma.studentAnswer.findMany({
       where: {
         session_id: sessionId,
@@ -1404,7 +1406,7 @@ findCompletedByUser: async (user_id) =>
       try {
         return await prisma.quiz_state.create({
           data,
-        });
+        });findBySession
       } catch (err) {
 
         // Another request already created this quiz state

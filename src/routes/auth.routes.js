@@ -179,17 +179,17 @@ router.post("/login", async (req, res, next) => {
         error: "email and password are required",
       });
     }
+  // find user
+   const user = await repo.users.findByEmail(
+  email.trim().toLowerCase()
+);
 
-    // Find User
-    const user = await repo.users.findByEmail(
-      email.trim().toLowerCase()
-    );
+if (!user) {
+  return res.status(401).json({
+    error: "invalid credentials",
+  });
+}
 
-    if (!user) {
-      return res.status(401).json({
-        error: "invalid credentials",
-      });
-    }
 
     // Verify Password
     const ok = await bcrypt.compare(

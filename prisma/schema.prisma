@@ -425,7 +425,7 @@ model RefreshToken {
   user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_refresh_tokens_user")
 
   @@index([expires_at], map: "idx_refresh_tokens_expires")
-  @@index([user_id], map: "idx_refresh_tokens_user")
+model Domain  @@index([user_id], map: "idx_refresh_tokens_user")
   @@map("refresh_tokens")
   @@schema("education")
 }
@@ -459,7 +459,7 @@ model Skill {
   @@schema("education")
 }
 
-model DomainRequiredSkill {
+RequiredSkill {
   domain_required_skill_id Int        @id @default(autoincrement())
   domain_role_id           String     @db.Uuid
   skill_id                 Int

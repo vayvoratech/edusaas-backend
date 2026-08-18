@@ -25,8 +25,13 @@ const PERMISSIONS = [
   { name: "users:profile:view", category: "Users", description: "View user profiles" },
   { name: "users:profile:update", category: "Users", description: "Update user profiles" },
 
-  // Jobs
-  { name: "jobs:create", category: "Jobs", description: "Create a job posting" },
+  
+// Jobs
+{ name: "jobs:view", category: "Jobs", description: "View job postings" },
+{ name: "jobs:create", category: "Jobs", description: "Create a job posting" },
+{ name: "jobs:update", category: "Jobs", description: "Update a job posting" },
+{ name: "jobs:delete", category: "Jobs", description: "Delete a job posting" },
+{ name: "jobs:view-applications", category: "Jobs", description: "View job applications" },
 ];
 
 const ROLES = ["student", "educator", "admin", "employer"];
@@ -50,9 +55,12 @@ const ROLE_PERMISSIONS = {
   ],
   admin: PERMISSIONS.map((p) => p.name), // Admin gets all permissions
   employer: [
-    "dashboards:employer",
-    "jobs:create",
-  ],
+  "dashboards:employer",
+  "jobs:view",
+  "jobs:create",
+  "jobs:update",
+  "jobs:delete",
+],
 };
 const prisma = new PrismaClient();
 

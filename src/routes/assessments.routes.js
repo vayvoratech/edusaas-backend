@@ -2,6 +2,7 @@ const express = require("express");
 const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
 const assessmentService = require("../services/assessmentService");
+console.log("ASSESSMENT SERVICE EXPORTS:", Object.keys(assessmentService));
 
 const router = express.Router();
 
