@@ -425,7 +425,7 @@ model RefreshToken {
   user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_refresh_tokens_user")
 
   @@index([expires_at], map: "idx_refresh_tokens_expires")
-model Domain  @@index([user_id], map: "idx_refresh_tokens_user")
+  @@index([user_id], map: "idx_refresh_tokens_user")
   @@map("refresh_tokens")
   @@schema("education")
 }
@@ -459,7 +459,7 @@ model Skill {
   @@schema("education")
 }
 
-RequiredSkill {
+model DomainRequiredSkill {
   domain_required_skill_id Int        @id @default(autoincrement())
   domain_role_id           String     @db.Uuid
   skill_id                 Int
@@ -505,22 +505,28 @@ model Question {
 }
 
 model QuizSession {
-  session_id         Int                  @id @default(autoincrement())
-  user_id            String               @db.Uuid
-  domain_role_id     String               @db.Uuid
-  start_time         DateTime             @default(now()) @db.Timestamp(6)
-  end_time           DateTime?            @db.Timestamp(6)
-  status             String               @default("In Progress") @db.VarChar(20)
-  total_questions    Int                  @default(50)
-  questions_answered Int                  @default(0)
-  current_skill_id   Int?
-  domainRole         DomainRole           @relation(fields: [domain_role_id], references: [domain_role_id], onUpdate: NoAction)
-  user               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  quiz_state         quiz_state[]
-  answers            StudentAnswer[]
-  skillResults       StudentSkillResult[]
+  session_id          Int                  @id @default(autoincrement())
+  user_id             String               @db.Uuid
+  domain_role_id      String               @db.Uuid
+  start_time          DateTime             @default(now()) @db.Timestamp(6)
+  end_time            DateTime?            @db.Timestamp(6)
+  status              String               @default("In Progress") @db.VarChar(20)
+  total_questions     Int                  @default(50)
+  questions_answered  Int                  @default(0)
+  current_skill_id    Int?
+  deadline_at         DateTime?            @db.Timestamp(6)
+  current_question_id Int?
+  remaining_seconds   Int?
+  paused_at           DateTime?            @db.Timestamp(6)
+  proctoring_events   proctoring_events[]
+  domainRole          DomainRole           @relation(fields: [domain_role_id], references: [domain_role_id], onUpdate: NoAction)
+  user                User                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  quiz_state          quiz_state[]
+  answers             StudentAnswer[]
+  skillResults        StudentSkillResult[]
 
   @@index([current_skill_id], map: "idx_quiz_sessions_current_skill")
+  @@index([current_question_id], map: "idx_quiz_sessions_current_question")
   @@index([domain_role_id], map: "idx_quiz_sessions_domain_role")
   @@index([status], map: "idx_quiz_sessions_status")
   @@index([user_id], map: "idx_quiz_sessions_user")
@@ -696,6 +702,24 @@ model community_tags {
 
   @@index([slug], map: "idx_community_tags_slug")
   @@index([usage_count(sort: Desc)], map: "idx_community_tags_usage")
+  @@schema("education")
+}
+
+model proctoring_events {
+  event_id       Int         @id @default(autoincrement())
+  session_id     Int
+  event_source   String      @db.VarChar(20)
+  violation_type String      @db.VarChar(100)
+  action         String      @db.VarChar(30)
+  severity       String?     @db.VarChar(20)
+  message        String?
+  metadata       Json?
+  created_at     DateTime    @default(now()) @db.Timestamp(6)
+  quiz_sessions  QuizSession @relation(fields: [session_id], references: [session_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_proctoring_events_session")
+
+  @@index([created_at], map: "idx_proctoring_events_created_at")
+  @@index([session_id], map: "idx_proctoring_events_session")
+  @@index([violation_type], map: "idx_proctoring_events_violation_type")
   @@schema("education")
 }
 
