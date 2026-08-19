@@ -1,8 +1,19 @@
 const express = require("express");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
 const repo = require("../data");
 const { authRequired, permissionRequired } = require("../middleware/auth");
 
 const router = express.Router();
+
+// --------------------------------------------------
+// Resume Upload Configuration
+// --------------------------------------------------
+const uploadResume = require("../middleware/uploadResume");
+
+
 
 /**
  * @openapi
@@ -129,15 +140,6 @@ router.get("/", async (req, res, next) => {
       // 4. Get all jobs
       const jobs = await repo.jobs.list();
 
-      console.log("===== STUDENT JOB RECOMMENDATIONS =====");
-      console.log("Student:", {
-        id: student.id,
-        name: student.name,
-        domain_role_id: student.domain_role_id,
-        domain_role: studentDomain.domain_name,
-      });
-
-      console.log("All Jobs:", jobs);
 
       const recommendedJobs = [];
 
@@ -155,11 +157,7 @@ router.get("/", async (req, res, next) => {
             ?.trim()
             .toLowerCase();
 
-        console.log("JOB ROLE CHECK:", {
-          job: job.title,
-          jobRole,
-          studentRole,
-        });
+    
 
         if (jobRole !== studentRole) {
           continue;
@@ -341,11 +339,12 @@ router.get(
       for (const student of domainStudents) {
         // Get latest completed assessment
         const completedSession =
-          await repo.quizSessions.findCompletedByUser(student.id);
+  await repo.quizSessions.findCompletedByUser(student.id);
 
-        if (!completedSession) {
-          continue;
-        }
+if (!completedSession) {
+  continue;
+}
+
 
         // Get student's skill results
         const skillResults =
@@ -364,15 +363,6 @@ for (const result of skillResults) {
   });
 }
 
-console.log(
-  "STUDENT ASSESSMENT SKILLS:",
-  skillResults.map((r) => ({
-    skill_id: r.skill_id,
-    skill_name: r.skill?.skill_name,
-    percentage: Number(r.percentage || 0),
-    skill_level: Number(r.skill_level || 0),
-  }))
-);
 
 // Calculate how well the student's skills match this job
 let totalScore = 0;
@@ -621,63 +611,131 @@ router.delete(
  *         description: Application submitted
  */
 
-router.post("/:id/apply", authRequired, async (req, res, next) => {
+router.post(
+  "/:id/apply",
+  authRequired,
+  uploadResume.single("resume"),
+  async (req, res, next) => {
+    try {
+      if (req.user.role !== "student") {
+        return res.status(403).json({
+          error: "Only students can apply for jobs.",
+        });
+      }
+
+      const job = await repo.jobs.findById(req.params.id);
+
+      if (!job) {
+        return res.status(404).json({
+          error: "Job not found.",
+        });
+      }
+
+      if (job.status !== "open") {
+        return res.status(400).json({
+          error: "This job is not accepting applications.",
+        });
+      }
+
+      const existing = await repo.applications.findOne(
+        job.id,
+        req.user.sub
+      );
+
+      if (existing) {
+        return res.status(409).json({
+          error: "You have already applied for this job.",
+        });
+      }
+
+      // --------------------------------------------
+      // Parse application data from FormData
+      // --------------------------------------------
+
+      let applicationData = {};
+
+if (req.body?.application_data) {
   try {
-    if (req.user.role !== "student") {
-      return res.status(403).json({
-        error: "Only students can apply for jobs.",
-      });
-    }
-
-    const job = await repo.jobs.findById(req.params.id);
-
-    if (!job) {
-      return res.status(404).json({
-        error: "Job not found.",
-      });
-    }
-
-    if (job.status !== "open") {
-      return res.status(400).json({
-        error: "This job is not accepting applications.",
-      });
-    }
-
-    const existing = await repo.applications.findOne(
-      job.id,
-      req.user.sub
+    applicationData = JSON.parse(
+      req.body.application_data
     );
-
-    if (existing) {
-      return res.status(409).json({
-        error: "You have already applied for this job.",
-      });
-    }
-
-    const skill_match =
-      typeof req.body?.skill_match === "number"
-        ? req.body.skill_match
-        : 70;
-
-    const application = await repo.applications.create({
-      job_id: job.id,
-      student_id: req.user.sub,
-      status: "submitted",
-      skill_match,
-    });
-
-    await repo.notifications.create({
-      user_id: job.employer_id,
-      type: "application",
-      message: `New application for ${job.title}`,
-    });
-
-    return res.status(201).json(application);
-
   } catch (err) {
-    next(err);
+    return res.status(400).json({
+      error: "Invalid application data.",
+    });
   }
-});
+}
+
+console.log(
+  "BACKEND APPLICATION DATA:",
+  JSON.stringify(applicationData, null, 2)
+);
+
+      // --------------------------------------------
+      // Resume information
+      // --------------------------------------------
+
+      if (req.file) {
+  // New resume uploaded specifically for this application
+  applicationData.resume = {
+    file_name: req.file.originalname,
+    stored_name: req.file.filename,
+    file_type: req.file.mimetype,
+    file_size: req.file.size,
+    url: `/uploads/resumes/${req.file.filename}`,
+  };
+} else {
+  // Use the student's profile resume
+  const profile = await repo.profiles.findByUserId(
+    req.user.sub
+  );
+
+  if (profile?.resume) {
+    applicationData.resume = {
+      ...profile.resume,
+    };
+  }
+}
+
+      // --------------------------------------------
+      // Skill match
+      // --------------------------------------------
+
+      const skill_match =
+        typeof applicationData.skill_match === "number"
+          ? applicationData.skill_match
+          : 70;
+
+      // --------------------------------------------
+      // Create application
+      // --------------------------------------------
+
+      const application =
+        await repo.applications.create({
+          job_id: job.id,
+          student_id: req.user.sub,
+          status: "submitted",
+          skill_match,
+          application_data: applicationData,
+        });
+
+      // --------------------------------------------
+      // Notify employer
+      // --------------------------------------------
+
+      await repo.notifications.create({
+        user_id: job.employer_id,
+        type: "application",
+        message: `New application for ${job.title}`,
+      });
+
+      return res.status(201).json(application);
+
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /**
  * @openapi
@@ -738,4 +796,4 @@ router.get(
   }
 );
 
-module.exports = router;  
+module.exports = router; 

@@ -82,6 +82,22 @@ async function startInitialAssessment(userId) {
   const existingSession =
     await repo.quizSessions.findLatestByUser(userId);
 
+    console.log("========== START INITIAL ASSESSMENT ==========");
+console.log("USER ID:", userId);
+console.log("EXISTING SESSION:", existingSession);
+console.log(
+  "EXISTING SESSION ID:",
+  existingSession?.session_id
+);
+console.log(
+  "EXISTING SESSION STATUS:",
+  existingSession?.status
+);
+console.log(
+  "CURRENT QUESTION ID:",
+  existingSession?.current_question_id
+);
+
   // Terminal state - do not create new session
     if (existingSession) {
       if (existingSession.status === "Completed") {
@@ -462,11 +478,18 @@ async function startInitialAssessment(userId) {
       current_question_id: null,
     });
 
+
+    console.log("STEP 1: QUIZ SESSION CREATED");
+console.log("SESSION ID:", quizSession.session_id);
   /*
    * ----------------------------------------------------------
    * CREATE FLASK ADAPTIVE STATE
    * ----------------------------------------------------------
    */
+
+
+  console.log("STEP 2: CALLING FLASK CREATE QUIZ STATE");
+
   const stateResponse =
     await flaskService.createQuizState({
       session_id:
@@ -480,6 +503,9 @@ async function startInitialAssessment(userId) {
           firstSkill.skill.skill_name,
       },
     });
+
+    console.log("STEP 3: FLASK QUIZ STATE RESPONSE");
+console.log(stateResponse);
 
   const state =
     stateResponse.state;
@@ -522,12 +548,17 @@ async function startInitialAssessment(userId) {
    * GET FIRST ADAPTIVE QUESTION
    * ----------------------------------------------------------
    */
+
+  console.log("STEP 4: CALLING FLASK GET NEXT QUESTION");
   const questionResponse =
     await flaskService.getNextQuestion({
       state,
 
       questions,
     });
+
+    console.log("STEP 5: FLASK QUESTION RESPONSE");
+console.log(questionResponse);
 
   if (!questionResponse.question) {
     const error = new Error(
@@ -548,6 +579,10 @@ async function startInitialAssessment(userId) {
 
   const firstQuestion =
     questionResponse.question;
+
+    console.log("FIRST QUESTION:", firstQuestion);
+console.log("FIRST QUESTION ID:", firstQuestion?.question_id);
+console.log("SESSION ID:", quizSession.session_id);
 
   /*
    * ----------------------------------------------------------

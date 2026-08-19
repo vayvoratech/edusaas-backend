@@ -1068,18 +1068,24 @@ module.exports = {
       },
     }),
 
-  findBySkill: async (skill_id) =>
-    prisma.question.findMany({
-      where: {
-        skill_id,
-      },
-      include: {
-        difficulty: true,
-      },
-      orderBy: {
-        question_id: "asc",
-      },
-    }),
+  findBySkill: async (skill_id) => {
+  
+
+  const questions = await prisma.question.findMany({
+    where: {
+      skill_id,
+    },
+    include: {
+      difficulty: true,
+    },
+    orderBy: {
+      question_id: "asc",
+    },
+  });
+
+  
+  return questions;
+},
 
   findByDifficulty: async (difficulty_id) =>
     prisma.question.findMany({
@@ -1768,32 +1774,173 @@ module.exports = {
   },
 
   employerInsights: async (employer_id) => {
-    const jobs = await prisma.job.findMany({ where: { employer_id }, });
-    const jobIds = jobs.map((j) => j.id);
-    const apps =
-      jobIds.length === 0
-        ? [] : await prisma.application.findMany({where: {job_id: {in: jobIds,},},});
+  // Get employer's jobs
+  const jobs = await prisma.job.findMany({
+    where: { employer_id },
+  });
 
-    const topMatches = apps.filter(
-      (a) => (a.skill_match || 0) >= 80
-    ).length;
+  const jobIds = jobs.map((job) => job.id);
 
-    return {
-      jobOpenings: jobs.filter(
-        (j) => j.status === "open"
-      ).length,
-      newApplicants: apps.length,
-      topMatches,
-      // Not implemented yet — do not return fabricated values.
-      candidateMatches: {
-        strong: 0,
-        good: 0,
-        possible: 0,
+  // Actual applications
+  const apps =
+    jobIds.length === 0
+      ? []
+      : await prisma.application.findMany({
+          where: {
+            job_id: {
+              in: jobIds,
+            },
+          },
+        });
+
+  // Count actual applicants
+  const newApplicants = apps.length;
+
+  // Strong matches among actual applications
+  const topMatches = apps.filter(
+    (a) => Number(a.skill_match || 0) >= 80
+  ).length;
+
+  // Candidate matching counts
+  let strong = 0;
+  let good = 0;
+  let possible = 0;
+
+  // Get all active students
+  const students = await prisma.user.findMany({
+    where: {
+      status: "active",
+      role: {
+        name: "student",
       },
-      skillsInsights: [],
-    };
-  },
+    },
+  });
 
+  // Check every employer job
+  for (const job of jobs) {
+    // Find domain role using job title
+    const domainRole = await prisma.domainRole.findFirst({
+      where: {
+        domain_name: {
+          equals: job.title,
+          mode: "insensitive",
+        },
+      },
+    });
+
+    if (!domainRole) continue;
+
+    // Required skills for this job/domain
+    const requiredSkills =
+      await prisma.domainRequiredSkill.findMany({
+        where: {
+          domain_role_id: domainRole.domain_role_id,
+        },
+      });
+
+    if (!requiredSkills.length) continue;
+
+const domainStudents = students.filter(
+  (student) =>
+    student.domain_role_id ===
+    (domainRole.domain_role_id || domainRole.id)
+);
+
+    for (const student of domainStudents) {
+      // Latest completed assessment
+      const completedSession =
+        await prisma.quizSession.findFirst({
+          where: {
+            user_id: student.id,
+            status: "Completed",
+          },
+          orderBy: {
+            start_time: "desc",
+          },
+        });
+
+     if (!completedSession) {
+  continue;
+}
+
+      // Student's assessment results
+      const skillResults =
+        await prisma.studentSkillResult.findMany({
+          where: {
+            session_id:
+              completedSession.session_id,
+          },
+        });
+
+      const studentSkillMap = new Map();
+
+      for (const result of skillResults) {
+        studentSkillMap.set(
+          Number(result.skill_id),
+          Number(result.skill_level || 0)
+        );
+      }
+
+      let totalScore = 0;
+      let evaluatedSkills = 0;
+
+      for (const requiredSkill of requiredSkills) {
+        const requiredLevel = Number(
+          requiredSkill.required_level || 0
+        );
+
+        const studentLevel =
+          studentSkillMap.get(
+            Number(requiredSkill.skill_id)
+          ) || 0;
+
+        if (requiredLevel <= 0) {
+          totalScore += 1;
+        } else {
+          totalScore += Math.min(
+            studentLevel / requiredLevel,
+            1
+          );
+        }
+
+        evaluatedSkills++;
+      }
+
+      const skillMatch =
+        evaluatedSkills > 0
+          ? Math.round(
+              (totalScore / evaluatedSkills) * 100
+            )
+          : 0;
+
+      if (skillMatch >= 80) {
+        strong++;
+      } else if (skillMatch >= 60) {
+        good++;
+      } else {
+        possible++;
+      }
+    }
+  }
+
+  return {
+    jobOpenings: jobs.filter(
+      (job) => job.status === "open"
+    ).length,
+
+    newApplicants,
+
+    topMatches,
+
+    candidateMatches: {
+      strong,
+      good,
+      possible,
+    },
+
+    skillsInsights: [],
+  };
+},
   studentDashboard: async (user_id) => {
     const [
       user,
@@ -2134,7 +2281,7 @@ module.exports = {
     studentName: user?.name,
     domainRoleId: user?.domain_role_id,
     domainRole: user?.domainRole?.domain_name || null,
-    assessmentCompleted: !!initialAssessment,
+    assessmentCompleted: !!user?.profile?.initial_assessment_completed,  
     learningProgressPercentage,
     completedLessons,
     totalLessons,
