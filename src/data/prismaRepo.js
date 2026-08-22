@@ -579,24 +579,44 @@ module.exports = {
   },
 
   notifications: {
-    listByUser: async (user_id) =>
-      (await prisma.notification.findMany({ where: { user_id } })).map(mapNotif),
-    create: async (data) => mapNotif(await prisma.notification.create({ data })),
-    markRead: async (id, user_id) => {
-      const notification = await prisma.notification.findFirst({
-        where: { id, user_id },
-      });
+  listByUser: async (user_id) =>
+    (
+      await prisma.notification.findMany({
+        where: {
+          user_id,
+          OR: [
+            { expires_at: null },
+            { expires_at: { gt: new Date() } },
+          ],
+        },
+        orderBy: {
+          created_at: "desc",
+        },
+      })
+    ).map(mapNotif),
 
-      if (!notification) return null;
+  create: async (data) =>
+    mapNotif(
+      await prisma.notification.create({
+        data,
+      })
+    ),
 
-      return mapNotif(
-        await prisma.notification.update({
-          where: { id },
-          data: { read_status: true },
-        })
-      );
-    },
+  markRead: async (id, user_id) => {
+    const notification = await prisma.notification.findFirst({
+      where: { id, user_id },
+    });
+
+    if (!notification) return null;
+
+    return mapNotif(
+      await prisma.notification.update({
+        where: { id },
+        data: { read_status: true },
+      })
+    );
   },
+},
 
   subscriptions: {
     findByUserId: async (user_id) =>
@@ -1795,16 +1815,12 @@ module.exports = {
 
   // Count actual applicants
   const newApplicants = apps.length;
-
-  // Strong matches among actual applications
-  const topMatches = apps.filter(
-    (a) => Number(a.skill_match || 0) >= 80
-  ).length;
-
+  
   // Candidate matching counts
   let strong = 0;
   let good = 0;
   let possible = 0;
+  const skillsInsightsMap = new Map();
 
   // Get all active students
   const students = await prisma.user.findMany({
@@ -1831,12 +1847,19 @@ module.exports = {
     if (!domainRole) continue;
 
     // Required skills for this job/domain
-    const requiredSkills =
-      await prisma.domainRequiredSkill.findMany({
-        where: {
-          domain_role_id: domainRole.domain_role_id,
+   const requiredSkills =
+  await prisma.domainRequiredSkill.findMany({
+    where: {
+      domain_role_id: domainRole.domain_role_id,
+    },
+    include: {
+      skill: {
+        select: {
+          skill_name: true,
         },
-      });
+      },
+    },
+  });
 
     if (!requiredSkills.length) continue;
 
@@ -1847,6 +1870,9 @@ const domainStudents = students.filter(
 );
 
     for (const student of domainStudents) {
+
+
+     
       // Latest completed assessment
       const completedSession =
         await prisma.quizSession.findFirst({
@@ -1894,6 +1920,29 @@ const domainStudents = students.filter(
             Number(requiredSkill.skill_id)
           ) || 0;
 
+          const skillName = requiredSkill.skill?.skill_name;
+
+if (skillName) {
+  if (!skillsInsightsMap.has(skillName)) {
+    skillsInsightsMap.set(skillName, {
+      totalLevel: 0,
+      totalPercentage: 0,
+      candidates: 0,
+      qualified: 0,
+      requiredLevel,
+    });
+  }
+
+  const insight = skillsInsightsMap.get(skillName);
+
+  insight.totalLevel += studentLevel;
+  insight.candidates += 1;
+
+  if (studentLevel >= requiredLevel) {
+    insight.qualified += 1;
+  }
+}
+
         if (requiredLevel <= 0) {
           totalScore += 1;
         } else {
@@ -1913,6 +1962,8 @@ const domainStudents = students.filter(
             )
           : 0;
 
+        
+
       if (skillMatch >= 80) {
         strong++;
       } else if (skillMatch >= 60) {
@@ -1923,6 +1974,34 @@ const domainStudents = students.filter(
     }
   }
 
+const skillsInsights = Array.from(
+  skillsInsightsMap.entries()
+).map(([skill, data]) => ({
+  skill,
+  value:
+    data.candidates > 0
+      ? Math.round(
+          (data.totalLevel / data.candidates) * 20
+        )
+      : 0,
+  averageLevel:
+    data.candidates > 0
+      ? Number(
+          (data.totalLevel / data.candidates).toFixed(1)
+        )
+      : 0,
+  requiredLevel: data.requiredLevel,
+  assessedCandidates: data.candidates,
+  qualifiedCandidates: data.qualified,
+}));
+
+
+  const topMatches = strong;
+
+// ===============================
+// SKILL INSIGHTS
+// ===============================
+  
   return {
     jobOpenings: jobs.filter(
       (job) => job.status === "open"
@@ -1938,7 +2017,7 @@ const domainStudents = students.filter(
       possible,
     },
 
-    skillsInsights: [],
+    skillsInsights,
   };
 },
   studentDashboard: async (user_id) => {
