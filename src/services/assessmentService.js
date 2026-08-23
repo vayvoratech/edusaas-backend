@@ -80,23 +80,9 @@ async function startInitialAssessment(userId) {
    * Completed / Timed Out sessions are NOT returned.
    */
   const existingSession =
-    await repo.quizSessions.findLatestByUser(userId);
+    await repo.quizSessions.findActiveByUser(userId);
 
-    console.log("========== START INITIAL ASSESSMENT ==========");
-console.log("USER ID:", userId);
-console.log("EXISTING SESSION:", existingSession);
-console.log(
-  "EXISTING SESSION ID:",
-  existingSession?.session_id
-);
-console.log(
-  "EXISTING SESSION STATUS:",
-  existingSession?.status
-);
-console.log(
-  "CURRENT QUESTION ID:",
-  existingSession?.current_question_id
-);
+
 
   // Terminal state - do not create new session
     if (existingSession) {
@@ -478,9 +464,6 @@ console.log(
       current_question_id: null,
     });
 
-
-    console.log("STEP 1: QUIZ SESSION CREATED");
-console.log("SESSION ID:", quizSession.session_id);
   /*
    * ----------------------------------------------------------
    * CREATE FLASK ADAPTIVE STATE
@@ -488,7 +471,7 @@ console.log("SESSION ID:", quizSession.session_id);
    */
 
 
-  console.log("STEP 2: CALLING FLASK CREATE QUIZ STATE");
+
 
   const stateResponse =
     await flaskService.createQuizState({
@@ -504,7 +487,7 @@ console.log("SESSION ID:", quizSession.session_id);
       },
     });
 
-    console.log("STEP 3: FLASK QUIZ STATE RESPONSE");
+    
 console.log(stateResponse);
 
   const state =
