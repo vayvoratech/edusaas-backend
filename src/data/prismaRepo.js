@@ -546,6 +546,11 @@ module.exports = {
         where: { user_id_course_id: { user_id, course_id } },
       })),
     create: async (data) => mapEnrollment(await prisma.enrollment.create({ data })),
+    update: async (user_id, course_id, data) =>
+      mapEnrollment(await prisma.enrollment.update({
+        where: { user_id_course_id: { user_id, course_id } },
+        data
+      })),
     listByUser: async (user_id) =>
       (await prisma.enrollment.findMany({ where: { user_id } })).map(mapEnrollment),
     listByCourse: async (course_id) =>
@@ -652,14 +657,17 @@ module.exports = {
 
   lessons: {
     listByCourse: async (course_id) =>
-      (await prisma.lesson.findMany({ where: { course_id }, orderBy: { order_index: "asc" } })).map(mapLesson),
-    findById: async (id) => mapLesson(await prisma.lesson.findUnique({ where: { id } })),
+      (await prisma.lesson.findMany({ where: { course_id }, orderBy: { order_index: "asc" }, include: { quizzes: true } })).map(mapLesson),
+    findById: async (id) => mapLesson(await prisma.lesson.findUnique({ where: { id }, include: { quizzes: true } })),
     create: async (data) => mapLesson(await prisma.lesson.create({ data })),
+    update: async (id, data) => mapLesson(await prisma.lesson.update({ where: { id }, data })),
+    delete: async (id) => prisma.lesson.delete({ where: { id } }),
   },
 
   quizzes: {
     findByLessonId: async (lesson_id) => prisma.quiz.findFirst({ where: { lesson_id } }),
     create: async (data) => prisma.quiz.create({ data }),
+    deleteByLessonId: async (lesson_id) => prisma.quiz.deleteMany({ where: { lesson_id } }),
   },
 
   assignments: {
@@ -1505,12 +1513,28 @@ module.exports = {
       post_type,
       visibility,
       author_id,
+      user_role,
+      current_user_id,
     } = {}) {
 
       const where = {
         deleted_at: null,
         status: "Published",
       };
+
+      if (user_role && user_role.toLowerCase() !== "admin") {
+        const { Prisma } = require("@prisma/client");
+        const roleCased = user_role.charAt(0).toUpperCase() + user_role.slice(1).toLowerCase();
+        
+        where.OR = [
+          { metadata: { equals: Prisma.AnyNull } },
+          { metadata: { path: ['allowedRoles'], array_contains: roleCased } },
+        ];
+        
+        if (current_user_id) {
+          where.OR.push({ author_id: current_user_id });
+        }
+      }
 
       if (post_type) {
         where.post_type = post_type;
