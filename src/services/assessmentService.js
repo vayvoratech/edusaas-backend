@@ -560,12 +560,16 @@ console.log(questionResponse);
 
   
 
-  const firstQuestion =
-    questionResponse.question;
+  const firstQuestion = questionResponse.question;
+  const actualQuestionId = firstQuestion?.question_id || firstQuestion?.id;
 
-    console.log("FIRST QUESTION:", firstQuestion);
-console.log("FIRST QUESTION ID:", firstQuestion?.question_id);
-console.log("SESSION ID:", quizSession.session_id);
+  console.log("FIRST QUESTION:", firstQuestion);
+  console.log("FIRST QUESTION ID:", actualQuestionId);
+  console.log("SESSION ID:", quizSession.session_id);
+
+  if (!actualQuestionId) {
+    throw new Error("AI service returned a question without a valid ID (question_id or id missing).");
+  }
 
   /*
    * ----------------------------------------------------------
@@ -580,8 +584,7 @@ console.log("SESSION ID:", quizSession.session_id);
   await repo.quizSessions.update(
     quizSession.session_id,
     {
-      current_question_id:
-        firstQuestion.question_id,
+      current_question_id: actualQuestionId,
     }
   );
 
