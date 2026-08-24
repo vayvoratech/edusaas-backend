@@ -3,6 +3,20 @@ const crypto = require("crypto");
 
 const prisma = new PrismaClient();
 
+const userInclude = {
+  role: {
+    include: {
+      permissions: {
+        include: {
+          permission: true,
+        },
+      },
+    },
+  },
+  domainRole: true,
+  profile: true,
+};
+
 const iso = (d) => (d instanceof Date ? d.toISOString() : d);
 
 // Buckets records into the last 4 rolling 7-day windows (Week 1 = oldest, Week 4 = most
@@ -130,19 +144,7 @@ function learningProgressByEnrollment(
 
   // User rows are always fetched with role + role.permissions included so we can
   // expose `role` (name) and `permissions[]` to callers.
-  const userInclude = {
-        role: {
-            include: {
-                permissions: {
-                    include: {
-                        permission: true
-                    }
-                }
-            }
-        },
-
-        domainRole: true,
-    };
+  
 
   const mapUser = (u) =>
       u && {
@@ -582,24 +584,44 @@ module.exports = {
   },
 
   notifications: {
-    listByUser: async (user_id) =>
-      (await prisma.notification.findMany({ where: { user_id } })).map(mapNotif),
-    create: async (data) => mapNotif(await prisma.notification.create({ data })),
-    markRead: async (id, user_id) => {
-      const notification = await prisma.notification.findFirst({
-        where: { id, user_id },
-      });
+  listByUser: async (user_id) =>
+    (
+      await prisma.notification.findMany({
+        where: {
+          user_id,
+          OR: [
+            { expires_at: null },
+            { expires_at: { gt: new Date() } },
+          ],
+        },
+        orderBy: {
+          created_at: "desc",
+        },
+      })
+    ).map(mapNotif),
 
-      if (!notification) return null;
+  create: async (data) =>
+    mapNotif(
+      await prisma.notification.create({
+        data,
+      })
+    ),
 
-      return mapNotif(
-        await prisma.notification.update({
-          where: { id },
-          data: { read_status: true },
-        })
-      );
-    },
+  markRead: async (id, user_id) => {
+    const notification = await prisma.notification.findFirst({
+      where: { id, user_id },
+    });
+
+    if (!notification) return null;
+
+    return mapNotif(
+      await prisma.notification.update({
+        where: { id },
+        data: { read_status: true },
+      })
+    );
   },
+},
 
   subscriptions: {
     findByUserId: async (user_id) =>
@@ -1074,18 +1096,24 @@ module.exports = {
       },
     }),
 
-  findBySkill: async (skill_id) =>
-    prisma.question.findMany({
-      where: {
-        skill_id,
-      },
-      include: {
-        difficulty: true,
-      },
-      orderBy: {
-        question_id: "asc",
-      },
-    }),
+  findBySkill: async (skill_id) => {
+  
+
+  const questions = await prisma.question.findMany({
+    where: {
+      skill_id,
+    },
+    include: {
+      difficulty: true,
+    },
+    orderBy: {
+      question_id: "asc",
+    },
+  });
+
+  
+  return questions;
+},
 
   findByDifficulty: async (difficulty_id) =>
     prisma.question.findMany({
@@ -1299,7 +1327,7 @@ module.exports = {
       },
     }),
 
-  findBySessionId: async (sessionId) =>
+  Id: async (sessionId) =>
     prisma.studentAnswer.findMany({
       where: {
         session_id: sessionId,
@@ -1416,7 +1444,7 @@ module.exports = {
       try {
         return await prisma.quiz_state.create({
           data,
-        });
+        });findBySession
       } catch (err) {
 
         // Another request already created this quiz state
@@ -1790,32 +1818,232 @@ module.exports = {
   },
 
   employerInsights: async (employer_id) => {
-    const jobs = await prisma.job.findMany({ where: { employer_id }, });
-    const jobIds = jobs.map((j) => j.id);
-    const apps =
-      jobIds.length === 0
-        ? [] : await prisma.application.findMany({where: {job_id: {in: jobIds,},},});
+  // Get employer's jobs
+  const jobs = await prisma.job.findMany({
+    where: { employer_id },
+  });
 
-    const topMatches = apps.filter(
-      (a) => (a.skill_match || 0) >= 80
-    ).length;
+  const jobIds = jobs.map((job) => job.id);
 
-    return {
-      jobOpenings: jobs.filter(
-        (j) => j.status === "open"
-      ).length,
-      newApplicants: apps.length,
-      topMatches,
-      // Not implemented yet — do not return fabricated values.
-      candidateMatches: {
-        strong: 0,
-        good: 0,
-        possible: 0,
+  // Actual applications
+  const apps =
+    jobIds.length === 0
+      ? []
+      : await prisma.application.findMany({
+          where: {
+            job_id: {
+              in: jobIds,
+            },
+          },
+        });
+
+  // Count actual applicants
+  const newApplicants = apps.length;
+  
+  // Candidate matching counts
+  let strong = 0;
+  let good = 0;
+  let possible = 0;
+  const skillsInsightsMap = new Map();
+
+  // Get all active students
+  const students = await prisma.user.findMany({
+    where: {
+      status: "active",
+      role: {
+        name: "student",
       },
-      skillsInsights: [],
-    };
-  },
+    },
+  });
 
+  // Check every employer job
+  for (const job of jobs) {
+    // Find domain role using job title
+    const domainRole = await prisma.domainRole.findFirst({
+      where: {
+        domain_name: {
+          equals: job.title,
+          mode: "insensitive",
+        },
+      },
+    });
+
+    if (!domainRole) continue;
+
+    // Required skills for this job/domain
+   const requiredSkills =
+  await prisma.domainRequiredSkill.findMany({
+    where: {
+      domain_role_id: domainRole.domain_role_id,
+    },
+    include: {
+      skill: {
+        select: {
+          skill_name: true,
+        },
+      },
+    },
+  });
+
+    if (!requiredSkills.length) continue;
+
+const domainStudents = students.filter(
+  (student) =>
+    student.domain_role_id ===
+    (domainRole.domain_role_id || domainRole.id)
+);
+
+    for (const student of domainStudents) {
+
+
+     
+      // Latest completed assessment
+      const completedSession =
+        await prisma.quizSession.findFirst({
+          where: {
+            user_id: student.id,
+            status: "Completed",
+          },
+          orderBy: {
+            start_time: "desc",
+          },
+        });
+
+     if (!completedSession) {
+  continue;
+}
+
+      // Student's assessment results
+      const skillResults =
+        await prisma.studentSkillResult.findMany({
+          where: {
+            session_id:
+              completedSession.session_id,
+          },
+        });
+
+      const studentSkillMap = new Map();
+
+      for (const result of skillResults) {
+        studentSkillMap.set(
+          Number(result.skill_id),
+          Number(result.skill_level || 0)
+        );
+      }
+
+      let totalScore = 0;
+      let evaluatedSkills = 0;
+
+      for (const requiredSkill of requiredSkills) {
+        const requiredLevel = Number(
+          requiredSkill.required_level || 0
+        );
+
+        const studentLevel =
+          studentSkillMap.get(
+            Number(requiredSkill.skill_id)
+          ) || 0;
+
+          const skillName = requiredSkill.skill?.skill_name;
+
+if (skillName) {
+  if (!skillsInsightsMap.has(skillName)) {
+    skillsInsightsMap.set(skillName, {
+      totalLevel: 0,
+      totalPercentage: 0,
+      candidates: 0,
+      qualified: 0,
+      requiredLevel,
+    });
+  }
+
+  const insight = skillsInsightsMap.get(skillName);
+
+  insight.totalLevel += studentLevel;
+  insight.candidates += 1;
+
+  if (studentLevel >= requiredLevel) {
+    insight.qualified += 1;
+  }
+}
+
+        if (requiredLevel <= 0) {
+          totalScore += 1;
+        } else {
+          totalScore += Math.min(
+            studentLevel / requiredLevel,
+            1
+          );
+        }
+
+        evaluatedSkills++;
+      }
+
+      const skillMatch =
+        evaluatedSkills > 0
+          ? Math.round(
+              (totalScore / evaluatedSkills) * 100
+            )
+          : 0;
+
+        
+
+      if (skillMatch >= 80) {
+        strong++;
+      } else if (skillMatch >= 60) {
+        good++;
+      } else {
+        possible++;
+      }
+    }
+  }
+
+const skillsInsights = Array.from(
+  skillsInsightsMap.entries()
+).map(([skill, data]) => ({
+  skill,
+  value:
+    data.candidates > 0
+      ? Math.round(
+          (data.totalLevel / data.candidates) * 20
+        )
+      : 0,
+  averageLevel:
+    data.candidates > 0
+      ? Number(
+          (data.totalLevel / data.candidates).toFixed(1)
+        )
+      : 0,
+  requiredLevel: data.requiredLevel,
+  assessedCandidates: data.candidates,
+  qualifiedCandidates: data.qualified,
+}));
+
+
+  const topMatches = strong;
+
+// ===============================
+// SKILL INSIGHTS
+// ===============================
+  
+  return {
+    jobOpenings: jobs.filter(
+      (job) => job.status === "open"
+    ).length,
+
+    newApplicants,
+
+    topMatches,
+
+    candidateMatches: {
+      strong,
+      good,
+      possible,
+    },
+
+    skillsInsights,
+  };
+},
   studentDashboard: async (user_id) => {
     const [
       user,
@@ -2156,7 +2384,7 @@ module.exports = {
     studentName: user?.name,
     domainRoleId: user?.domain_role_id,
     domainRole: user?.domainRole?.domain_name || null,
-    assessmentCompleted: !!initialAssessment,
+    assessmentCompleted: !!user?.profile?.initial_assessment_completed,  
     learningProgressPercentage,
     completedLessons,
     totalLessons,

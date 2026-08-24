@@ -20,7 +20,7 @@ function toClientQuestion(question) {
   if (!question) return null;
   const { correct_option, ...rest } = question;
   return rest;
-}
+} 
 
 // ---------------------------------------------------------------------
 // Start the initial adaptive assessment
@@ -34,6 +34,15 @@ async function startInitialAssessment(userId) {
     throw error;
   }
 
+  // Prevent starting a new assessment after completion
+  const profile = await repo.profiles.findByUserId(userId);
+
+  if (profile?.initial_assessment_completed === true) {
+    const error = new Error("Initial assessment already completed");
+    error.status = 409;
+    throw error;
+  }
+
   if (!user.domain_role_id) {
     const error = new Error(
       "Student has not selected a domain role"
@@ -41,6 +50,7 @@ async function startInitialAssessment(userId) {
     error.status = 400;
     throw error;
   }
+ 
 
   const requiredSkills =
     await repo.domainRequiredSkills.findByDomainRoleId(
@@ -70,7 +80,9 @@ async function startInitialAssessment(userId) {
    * Completed / Timed Out sessions are NOT returned.
    */
   const existingSession =
-    await repo.quizSessions.findLatestByUser(userId);
+    await repo.quizSessions.findActiveByUser(userId);
+
+
 
   // Terminal state - do not create new session
     if (existingSession) {
@@ -457,6 +469,10 @@ async function startInitialAssessment(userId) {
    * CREATE FLASK ADAPTIVE STATE
    * ----------------------------------------------------------
    */
+
+
+
+
   const stateResponse =
     await flaskService.createQuizState({
       session_id:
@@ -470,6 +486,9 @@ async function startInitialAssessment(userId) {
           firstSkill.skill.skill_name,
       },
     });
+
+    
+console.log(stateResponse);
 
   const state =
     stateResponse.state;
@@ -512,12 +531,17 @@ async function startInitialAssessment(userId) {
    * GET FIRST ADAPTIVE QUESTION
    * ----------------------------------------------------------
    */
+
+  console.log("STEP 4: CALLING FLASK GET NEXT QUESTION");
   const questionResponse =
     await flaskService.getNextQuestion({
       state,
 
       questions,
     });
+
+    console.log("STEP 5: FLASK QUESTION RESPONSE");
+console.log(questionResponse);
 
   if (!questionResponse.question) {
     const error = new Error(
@@ -528,8 +552,20 @@ async function startInitialAssessment(userId) {
     throw error;
   }
 
+ 
+  
+// --------------------------------------------------
+// Response
+// --------------------------------------------------
+
+  
+
   const firstQuestion =
     questionResponse.question;
+
+    console.log("FIRST QUESTION:", firstQuestion);
+console.log("FIRST QUESTION ID:", firstQuestion?.question_id);
+console.log("SESSION ID:", quizSession.session_id);
 
   /*
    * ----------------------------------------------------------
@@ -1219,29 +1255,53 @@ async function submitInitialAssessmentAnswer(
   const requiredSkills = await repo.domainRequiredSkills.findByDomainRoleId(
     quizSession.domain_role_id
   );
+
+  const skillOrder = [
+  "Python",
+  "SQL",
+  "Machine Learning",
+  "Deep Learning",
+  "Git",
+];
+
+requiredSkills.sort((a, b) => {
+  const indexA = skillOrder.indexOf(a.skill.skill_name);
+  const indexB = skillOrder.indexOf(b.skill.skill_name);
+
+  return indexA - indexB;
+});
   const completedResults = await repo.studentSkillResults.findBySessionId(
     sessionId
   );
   const completedSkillIds = new Set(completedResults.map((r) => r.skill_id));
 
   const assessmentMeta = {
-    total_skills: requiredSkills.length,
-    questions_per_skill: 10,
-    total_questions: requiredSkills.length * 10,
-    current_skill_index: completedResults.length,
-    overall_question: (quizSession.questions_answered || 0) + 1,
-    remaining_questions:
-      requiredSkills.length * 10 - ((quizSession.questions_answered || 0) + 1),
-    skills: requiredSkills.map((item) => ({
-      skill_id: item.skill_id,
-      skill_name: item.skill.skill_name,
-      status: completedSkillIds.has(item.skill_id)
-        ? "completed"
-        : item.skill_id === quizSession.current_skill_id
-        ? "current"
-        : "upcoming",
-    })),
-  };
+  total_skills: requiredSkills.length,
+  questions_per_skill: 10,
+  total_questions: requiredSkills.length * 10,
+
+  current_skill_index: requiredSkills.findIndex(
+    (skill) => skill.skill_id === quizSession.current_skill_id
+  ),
+
+  overall_question: (quizSession.questions_answered || 0) + 1,
+
+  remaining_questions:
+    requiredSkills.length * 10 -
+    ((quizSession.questions_answered || 0) + 1),
+
+  skills: requiredSkills.map((item) => ({
+    skill_id: item.skill_id,
+    skill_name: item.skill.skill_name,
+
+    status: completedSkillIds.has(item.skill_id)
+      ? "completed"
+      : item.skill_id === quizSession.current_skill_id
+      ? "current"
+      : "upcoming",
+  })),
+};
+
 
   // Skill not finished yet — just hand back the next question
   if (!result.skill_completed) {
@@ -1298,7 +1358,7 @@ async function submitInitialAssessmentAnswer(
     percentage: score.percentage,
     skill_level: score.skill_level,
   });
-  completedSkillIds.add(skillId),
+  completedSkillIds.add(skillId);
   completedResults.push({
     skill_id: skillId
   })
@@ -1312,15 +1372,20 @@ async function submitInitialAssessmentAnswer(
   // Nothing left — assessment complete. This is the trigger point for
   // Skill Gap Analysis (Assessment Completed -> Load Results -> Load
   // Required Skills -> Python Skill Gap Engine -> ... -> Report).
-  if (!nextRequired) {
-    await repo.quizSessions.update(sessionId, {
-      status: "Completed",
-      end_time: new Date(),
-    });
+ if (!nextRequired) {
+  await repo.quizSessions.update(sessionId, {
+    status: "Completed",
+    end_time: new Date(),
+  });
 
-    const allResults = await repo.studentSkillResults.findBySessionId(
-      sessionId
-    );
+  await repo.profiles.upsert(userId, {
+    initial_assessment_completed: true,
+  });
+
+  const allResults = await repo.studentSkillResults.findBySessionId(
+    sessionId
+  );
+
 
     // Quiz's own readiness metric: average % correct across skills.
     // NOT the same number as the skill-gap engine's readiness_score
@@ -1413,17 +1478,16 @@ async function submitInitialAssessmentAnswer(
       ((quizSession.questions_answered || 0) + 1),
 
     skills: requiredSkills.map((item) => ({
-      skill_id: item.skill_id,
+  skill_id: item.skill_id,
+  skill_name: item.skill.skill_name,
 
-      skill_name: item.skill.skill_name,
-
-      status:
-        item.skill_id === skillId
-          ? "completed"
-          : item.skill_id === nextRequired.skill_id
-          ? "current"
-          : "upcoming",
-    })),
+  status:
+    completedSkillIds.has(item.skill_id)
+      ? "completed"
+      : item.skill_id === nextRequired.skill_id
+      ? "current"
+      : "upcoming",
+})),
   };
 
   return {

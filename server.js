@@ -44,8 +44,11 @@ const app = express();
 app.use(cors());
 // Parse incoming JSON requests
 app.use(express.json());
-// Serve static files from the uploads directory
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploaded resumes
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "uploads"))
+);
 
 // Root endpoint to check the status of the service
 app.get("/", (req, res) => {
