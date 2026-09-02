@@ -1,6 +1,19 @@
 const express = require("express");
 const repo = require("../data");
 const { authRequired, permissionRequired } = require("../middleware/auth");
+const multer = require("multer");
+const path = require("path");
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/')
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+    cb(null, 'course-thumb-' + uniqueSuffix + path.extname(file.originalname))
+  }
+});
+const upload = multer({ storage: storage });
 
 const router = express.Router();
 
@@ -57,7 +70,7 @@ router.get("/", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post("/", authRequired, permissionRequired("courses:create"), async (req, res, next) => {
+router.post("/", authRequired, permissionRequired("courses:create"), upload.single('thumbnail'), async (req, res, next) => {
   try {
       const isAdmin = req.user.role === "admin";
       const isEducator = req.user.role === "educator";
@@ -70,12 +83,19 @@ router.post("/", authRequired, permissionRequired("courses:create"), async (req,
 
     const { title, description, provider, category, difficulty, status } = req.body || {};
     if (!title) return res.status(400).json({ error: "title is required" });
+    
+    let thumbnail_url = null;
+    if (req.file) {
+      thumbnail_url = `/uploads/${req.file.filename}`;
+    }
+
     const course = await repo.courses.create({
       title, description: description || "",
-      provider: provider || "EDU-SAAS",
+      provider: provider || (isEducator ? req.user.name : "EDU-SAAS"),
       category: category || "General",
       difficulty: difficulty || "beginner",
       status: status || "active",
+      thumbnail_url,
       educator_id:
       isEducator
         ? req.user.sub
@@ -132,7 +152,7 @@ router.get("/:id", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.patch("/:id", authRequired, permissionRequired("courses:update"), async (req, res, next) => {
+router.patch("/:id", authRequired, permissionRequired("courses:update"), upload.single('thumbnail'), async (req, res, next) => {
   try {
 
     const course = await repo.courses.findById(req.params.id);
@@ -162,6 +182,11 @@ router.patch("/:id", authRequired, permissionRequired("courses:update"), async (
     ];
     const data = {};
     for (const k of allowed) if (req.body[k] !== undefined) data[k] = req.body[k];
+    
+    if (req.file) {
+      data.thumbnail_url = `/uploads/${req.file.filename}`;
+    }
+
     if (data.status && !["active", "draft", "archived"].includes(data.status)) {
       return res.status(400).json({ error: "invalid status" });
     }

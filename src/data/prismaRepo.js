@@ -3,6 +3,20 @@ const crypto = require("crypto");
 
 const prisma = new PrismaClient();
 
+const userInclude = {
+  role: {
+    include: {
+      permissions: {
+        include: {
+          permission: true,
+        },
+      },
+    },
+  },
+  domainRole: true,
+  profile: true,
+};
+
 const iso = (d) => (d instanceof Date ? d.toISOString() : d);
 
 // Buckets records into the last 4 rolling 7-day windows (Week 1 = oldest, Week 4 = most
@@ -130,19 +144,7 @@ function learningProgressByEnrollment(
 
   // User rows are always fetched with role + role.permissions included so we can
   // expose `role` (name) and `permissions[]` to callers.
-  const userInclude = {
-        role: {
-            include: {
-                permissions: {
-                    include: {
-                        permission: true
-                    }
-                }
-            }
-        },
-
-        domainRole: true,
-    };
+  
 
   const mapUser = (u) =>
       u && {
@@ -546,6 +548,11 @@ module.exports = {
         where: { user_id_course_id: { user_id, course_id } },
       })),
     create: async (data) => mapEnrollment(await prisma.enrollment.create({ data })),
+    update: async (user_id, course_id, data) =>
+      mapEnrollment(await prisma.enrollment.update({
+        where: { user_id_course_id: { user_id, course_id } },
+        data
+      })),
     listByUser: async (user_id) =>
       (await prisma.enrollment.findMany({ where: { user_id } })).map(mapEnrollment),
     listByCourse: async (course_id) =>
@@ -577,24 +584,44 @@ module.exports = {
   },
 
   notifications: {
-    listByUser: async (user_id) =>
-      (await prisma.notification.findMany({ where: { user_id } })).map(mapNotif),
-    create: async (data) => mapNotif(await prisma.notification.create({ data })),
-    markRead: async (id, user_id) => {
-      const notification = await prisma.notification.findFirst({
-        where: { id, user_id },
-      });
+  listByUser: async (user_id) =>
+    (
+      await prisma.notification.findMany({
+        where: {
+          user_id,
+          OR: [
+            { expires_at: null },
+            { expires_at: { gt: new Date() } },
+          ],
+        },
+        orderBy: {
+          created_at: "desc",
+        },
+      })
+    ).map(mapNotif),
 
-      if (!notification) return null;
+  create: async (data) =>
+    mapNotif(
+      await prisma.notification.create({
+        data,
+      })
+    ),
 
-      return mapNotif(
-        await prisma.notification.update({
-          where: { id },
-          data: { read_status: true },
-        })
-      );
-    },
+  markRead: async (id, user_id) => {
+    const notification = await prisma.notification.findFirst({
+      where: { id, user_id },
+    });
+
+    if (!notification) return null;
+
+    return mapNotif(
+      await prisma.notification.update({
+        where: { id },
+        data: { read_status: true },
+      })
+    );
   },
+},
 
   subscriptions: {
     findByUserId: async (user_id) =>
@@ -652,14 +679,17 @@ module.exports = {
 
   lessons: {
     listByCourse: async (course_id) =>
-      (await prisma.lesson.findMany({ where: { course_id }, orderBy: { order_index: "asc" } })).map(mapLesson),
-    findById: async (id) => mapLesson(await prisma.lesson.findUnique({ where: { id } })),
+      (await prisma.lesson.findMany({ where: { course_id }, orderBy: { order_index: "asc" }, include: { quizzes: true } })).map(mapLesson),
+    findById: async (id) => mapLesson(await prisma.lesson.findUnique({ where: { id }, include: { quizzes: true } })),
     create: async (data) => mapLesson(await prisma.lesson.create({ data })),
+    update: async (id, data) => mapLesson(await prisma.lesson.update({ where: { id }, data })),
+    delete: async (id) => prisma.lesson.delete({ where: { id } }),
   },
 
   quizzes: {
     findByLessonId: async (lesson_id) => prisma.quiz.findFirst({ where: { lesson_id } }),
     create: async (data) => prisma.quiz.create({ data }),
+    deleteByLessonId: async (lesson_id) => prisma.quiz.deleteMany({ where: { lesson_id } }),
   },
 
   assignments: {
@@ -1561,7 +1591,7 @@ module.exports = {
       },
     }),
 
-  findBySessionId: async (sessionId) =>
+  Id: async (sessionId) =>
     prisma.studentAnswer.findMany({
       where: {
         session_id: sessionId,
@@ -1678,7 +1708,7 @@ module.exports = {
       try {
         return await prisma.quiz_state.create({
           data,
-        });
+        });findBySession
       } catch (err) {
 
         // Another request already created this quiz state
@@ -1747,6 +1777,220 @@ module.exports = {
           session_id,
         },
       }),
+  },
+
+  communityPosts: {
+
+    async create(data) {
+      return mapCommunityPost(
+        await prisma.community_posts.create({
+          data,
+          include: communityPostInclude,
+        })
+      );
+    },
+
+    async findById(id) {
+      return mapCommunityPost(
+        await prisma.community_posts.findUnique({
+          where: { id },
+          include: communityPostInclude,
+        })
+      );
+    },
+
+    async getFeed({
+      page = 1,
+      limit = 10,
+      post_type,
+      visibility,
+      author_id,
+      user_role,
+      current_user_id,
+    } = {}) {
+
+      const where = {
+        deleted_at: null,
+        status: "Published",
+      };
+
+      if (user_role && user_role.toLowerCase() !== "admin") {
+        const { Prisma } = require("@prisma/client");
+        const roleCased = user_role.charAt(0).toUpperCase() + user_role.slice(1).toLowerCase();
+        
+        where.OR = [
+          { metadata: { equals: Prisma.AnyNull } },
+          { metadata: { path: ['allowedRoles'], array_contains: roleCased } },
+        ];
+        
+        if (current_user_id) {
+          where.OR.push({ author_id: current_user_id });
+        }
+      }
+
+      if (post_type) {
+        where.post_type = post_type;
+      }
+
+      if (visibility) {
+        where.visibility = visibility;
+      }
+
+      if (author_id) {
+        where.author_id = author_id;
+      }
+
+      return (
+        await prisma.community_posts.findMany({
+          where,
+
+          include: communityPostInclude,
+
+          orderBy: {
+            created_at: "desc",
+          },
+
+          skip: (page - 1) * limit,
+
+          take: limit,
+        })
+      ).map(mapCommunityPost);
+    },
+
+    async findByAuthor(author_id) {
+      return (
+        await prisma.community_posts.findMany({
+          where: {
+            author_id,
+            deleted_at: null,
+          },
+          include: communityPostInclude,
+          orderBy: {
+            created_at: "desc",
+          },
+        })
+      ).map(mapCommunityPost);
+    },
+
+    async update(id, data) {
+      return mapCommunityPost(
+        await safeQuery(
+          prisma.community_posts.update({
+            where: { id },
+            data,
+            include: communityPostInclude,
+          })
+        )
+      );
+    },
+
+    async softDelete(id) {
+      return mapCommunityPost(
+        await safeQuery(
+          prisma.community_posts.update({
+            where: { id },
+            data: {
+              deleted_at: new Date(),
+            },
+            include: communityPostInclude,
+          })
+        )
+      );
+    },
+
+    async restore(id) {
+      return mapCommunityPost(
+        await safeQuery(
+          prisma.community_posts.update({
+            where: { id },
+            data: {
+              deleted_at: null,
+            },
+            include: communityPostInclude,
+          })
+        )
+      );
+    },
+
+    async exists(id) {
+
+      const count = await prisma.community_posts.count({
+        where: {
+          id,
+          deleted_at: null,
+        },
+      });
+
+      return count > 0;
+    },
+
+    async count(filters = {}) {
+
+      const where = {
+        deleted_at: null,
+      };
+
+      if (filters.author_id) {
+        where.author_id = filters.author_id;
+      }
+
+      if (filters.post_type) {
+        where.post_type = filters.post_type;
+      }
+
+      if (filters.status) {
+        where.status = filters.status;
+      }
+
+      return prisma.community_posts.count({
+        where,
+      });
+    },
+
+    async incrementCommentCount(id) {
+      return prisma.community_posts.update({
+        where: { id },
+        data: {
+          comments_count: {
+            increment: 1,
+          },
+        },
+      });
+    },
+
+    async decrementCommentCount(id) {
+      return prisma.community_posts.update({
+        where: { id },
+        data: {
+          comments_count: {
+            decrement: 1,
+          },
+        },
+      });
+    },
+
+    async incrementReactionCount(id) {
+      return prisma.community_posts.update({
+        where: { id },
+        data: {
+          reactions_count: {
+            increment: 1,
+          },
+        },
+      });
+    },
+
+    async decrementReactionCount(id) {
+      return prisma.community_posts.update({
+        where: { id },
+        data: {
+          reactions_count: {
+            decrement: 1,
+          },
+        },
+      });
+    },
+
   },
 
   insights: async () => {
@@ -1838,32 +2082,232 @@ module.exports = {
   },
 
   employerInsights: async (employer_id) => {
-    const jobs = await prisma.job.findMany({ where: { employer_id }, });
-    const jobIds = jobs.map((j) => j.id);
-    const apps =
-      jobIds.length === 0
-        ? [] : await prisma.application.findMany({where: {job_id: {in: jobIds,},},});
+  // Get employer's jobs
+  const jobs = await prisma.job.findMany({
+    where: { employer_id },
+  });
 
-    const topMatches = apps.filter(
-      (a) => (a.skill_match || 0) >= 80
-    ).length;
+  const jobIds = jobs.map((job) => job.id);
 
-    return {
-      jobOpenings: jobs.filter(
-        (j) => j.status === "open"
-      ).length,
-      newApplicants: apps.length,
-      topMatches,
-      // Not implemented yet — do not return fabricated values.
-      candidateMatches: {
-        strong: 0,
-        good: 0,
-        possible: 0,
+  // Actual applications
+  const apps =
+    jobIds.length === 0
+      ? []
+      : await prisma.application.findMany({
+          where: {
+            job_id: {
+              in: jobIds,
+            },
+          },
+        });
+
+  // Count actual applicants
+  const newApplicants = apps.length;
+  
+  // Candidate matching counts
+  let strong = 0;
+  let good = 0;
+  let possible = 0;
+  const skillsInsightsMap = new Map();
+
+  // Get all active students
+  const students = await prisma.user.findMany({
+    where: {
+      status: "active",
+      role: {
+        name: "student",
       },
-      skillsInsights: [],
-    };
-  },
+    },
+  });
 
+  // Check every employer job
+  for (const job of jobs) {
+    // Find domain role using job title
+    const domainRole = await prisma.domainRole.findFirst({
+      where: {
+        domain_name: {
+          equals: job.title,
+          mode: "insensitive",
+        },
+      },
+    });
+
+    if (!domainRole) continue;
+
+    // Required skills for this job/domain
+   const requiredSkills =
+  await prisma.domainRequiredSkill.findMany({
+    where: {
+      domain_role_id: domainRole.domain_role_id,
+    },
+    include: {
+      skill: {
+        select: {
+          skill_name: true,
+        },
+      },
+    },
+  });
+
+    if (!requiredSkills.length) continue;
+
+const domainStudents = students.filter(
+  (student) =>
+    student.domain_role_id ===
+    (domainRole.domain_role_id || domainRole.id)
+);
+
+    for (const student of domainStudents) {
+
+
+     
+      // Latest completed assessment
+      const completedSession =
+        await prisma.quizSession.findFirst({
+          where: {
+            user_id: student.id,
+            status: "Completed",
+          },
+          orderBy: {
+            start_time: "desc",
+          },
+        });
+
+     if (!completedSession) {
+  continue;
+}
+
+      // Student's assessment results
+      const skillResults =
+        await prisma.studentSkillResult.findMany({
+          where: {
+            session_id:
+              completedSession.session_id,
+          },
+        });
+
+      const studentSkillMap = new Map();
+
+      for (const result of skillResults) {
+        studentSkillMap.set(
+          Number(result.skill_id),
+          Number(result.skill_level || 0)
+        );
+      }
+
+      let totalScore = 0;
+      let evaluatedSkills = 0;
+
+      for (const requiredSkill of requiredSkills) {
+        const requiredLevel = Number(
+          requiredSkill.required_level || 0
+        );
+
+        const studentLevel =
+          studentSkillMap.get(
+            Number(requiredSkill.skill_id)
+          ) || 0;
+
+          const skillName = requiredSkill.skill?.skill_name;
+
+if (skillName) {
+  if (!skillsInsightsMap.has(skillName)) {
+    skillsInsightsMap.set(skillName, {
+      totalLevel: 0,
+      totalPercentage: 0,
+      candidates: 0,
+      qualified: 0,
+      requiredLevel,
+    });
+  }
+
+  const insight = skillsInsightsMap.get(skillName);
+
+  insight.totalLevel += studentLevel;
+  insight.candidates += 1;
+
+  if (studentLevel >= requiredLevel) {
+    insight.qualified += 1;
+  }
+}
+
+        if (requiredLevel <= 0) {
+          totalScore += 1;
+        } else {
+          totalScore += Math.min(
+            studentLevel / requiredLevel,
+            1
+          );
+        }
+
+        evaluatedSkills++;
+      }
+
+      const skillMatch =
+        evaluatedSkills > 0
+          ? Math.round(
+              (totalScore / evaluatedSkills) * 100
+            )
+          : 0;
+
+        
+
+      if (skillMatch >= 80) {
+        strong++;
+      } else if (skillMatch >= 60) {
+        good++;
+      } else {
+        possible++;
+      }
+    }
+  }
+
+const skillsInsights = Array.from(
+  skillsInsightsMap.entries()
+).map(([skill, data]) => ({
+  skill,
+  value:
+    data.candidates > 0
+      ? Math.round(
+          (data.totalLevel / data.candidates) * 20
+        )
+      : 0,
+  averageLevel:
+    data.candidates > 0
+      ? Number(
+          (data.totalLevel / data.candidates).toFixed(1)
+        )
+      : 0,
+  requiredLevel: data.requiredLevel,
+  assessedCandidates: data.candidates,
+  qualifiedCandidates: data.qualified,
+}));
+
+
+  const topMatches = strong;
+
+// ===============================
+// SKILL INSIGHTS
+// ===============================
+  
+  return {
+    jobOpenings: jobs.filter(
+      (job) => job.status === "open"
+    ).length,
+
+    newApplicants,
+
+    topMatches,
+
+    candidateMatches: {
+      strong,
+      good,
+      possible,
+    },
+
+    skillsInsights,
+  };
+},
   studentDashboard: async (user_id) => {
     const [
       user,
@@ -2214,7 +2658,7 @@ module.exports = {
     studentName: user?.name,
     domainRoleId: user?.domain_role_id,
     domainRole: user?.domainRole?.domain_name || null,
-    assessmentCompleted: !!initialAssessment && codingAssessment?.status === "Completed",
+    assessmentCompleted: !!user?.profile?.initial_assessment_completed,  
     learningProgressPercentage,
     completedLessons,
     totalLessons,

@@ -1,6 +1,7 @@
 // Import required modules
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 const swaggerUi = require("swagger-ui-express");
 
 // Import environment variables and Swagger configuration
@@ -43,6 +44,11 @@ const app = express();
 app.use(cors());
 // Parse incoming JSON requests
 app.use(express.json());
+// Serve uploaded resumes
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "uploads"))
+);
 
 // Root endpoint to check the status of the service
 app.get("/", (req, res) => {
