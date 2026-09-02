@@ -15,7 +15,7 @@ const flaskService = require("./flaskServices");
 //       Calculate Readiness Score -> Identify Missing Skills ->
 //       Generate Skill Gap Report (persisted to gap_reports)
 // ---------------------------------------------------------------------
-async function generateGapReport(userId) {
+async function generateGapReport(userId, { readinessScore } = {}) {
   // 1. Student + domain
   const user = await repo.users.findById(userId);
   
@@ -101,9 +101,14 @@ async function generateGapReport(userId) {
     })),
   };
 
+  const existingReport = await repo.gapReports.findByUserId(userId);
+
   // 8. One report per student — upsert overwrites the previous one
   const report = await repo.gapReports.upsert(userId, {
-    readiness_score: analysis.readiness_score,
+    readiness_score:
+      readinessScore ??
+      existingReport?.readiness_score ??
+      analysis.readiness_score,
     missing_skills: analysis.missing_skills,
     recommendations,
   });

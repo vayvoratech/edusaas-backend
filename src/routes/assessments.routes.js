@@ -4,6 +4,7 @@ const express = require("express");
 const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
 const assessmentService = require("../services/assessmentService");
+const codingAssessmentService = require("../services/codingAssessmentService")
 
 const router = express.Router();
 
@@ -105,10 +106,19 @@ router.get("/:id/results", authRequired, async (req, res, next) => {
   }
 });
 
-// ---------------------------------------------------------------------
-// Adaptive initial assessment (React -> Node -> DB -> Node -> Python -> Node -> DB -> React)
-// ---------------------------------------------------------------------
+router.get("/overview", authRequired, async (req, res) => {
+  try{
+    const overview = await assessmentService.getAssessmentOverview( req.user.sub )
+    return res.json(overview)
+  }catch(error){
+    console.error("Failed to get assessment overview", error);
+    return res.status(500).json({
+      error: "Failed to get assessment overview"
+    })
+  }
+})
 
+// Adaptive initial assessment (React -> Node -> DB -> Node -> AI/ML -> Node -> DB -> React)
 router.post("/initial-quiz/start", authRequired, async (req, res, next) => {
   try {
     if (req.user.role !== "student") {
@@ -299,5 +309,424 @@ router.post("/initial-quiz/answer", authRequired, async (req, res, next) => {
     next(err);
   }
 });
+
+// Initial coding assessment
+// React -> Node -> codingAssessmentService -> PostgreSQL / Docker
+router.post( "/initial-coding/start", authRequired, async (req, res, next) => {
+    try {
+      if (req.user.role !== "student") {
+        return res.status(403).json({
+          error: "Only students can start the coding assessment.",
+        });
+      }
+
+      const { session_id } = req.body || {};
+
+      if (session_id === undefined) {
+        return res.status(400).json({
+          error: "session_id is required.",
+        });
+      }
+
+      const sessionId = Number(session_id);
+
+      if (!Number.isInteger(sessionId)) {
+        return res.status(400).json({
+          error: "session_id must be a valid integer.",
+        });
+      }
+
+      const result = await codingAssessmentService.startAssessment({
+        userId: req.user.sub,
+        sessionId,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post("/initial-coding/run", authRequired,async (req, res, next) => {
+    try {
+      if (req.user.role !== "student") {
+        return res.status(403).json({
+          error: "Only students can run coding submissions.",
+        });
+      }
+
+      const result = await codingAssessmentService.runStudentCode({
+        userId: req.user.sub,
+        ...req.body,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post( "/initial-coding/submit", authRequired, async (req, res, next) => {
+    try {
+      if (req.user.role !== "student") {
+        return res.status(403).json({
+          error: "Only students can submit coding answers.",
+        });
+      }
+
+      const result = await codingAssessmentService.submitCode({
+        userId: req.user.sub,
+        ...req.body,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post( "/initial-coding/complete", authRequired, async (req, res, next) => {
+    try {
+      if (req.user.role !== "student") {
+        return res.status(403).json({
+          error: "Only students can complete the coding assessment.",
+        });
+      }
+
+      const { session_id } = req.body || {};
+
+      if (session_id === undefined) {
+        return res.status(400).json({
+          error: "session_id is required.",
+        });
+      }
+
+      const sessionId = Number(session_id);
+
+      if (!Number.isInteger(sessionId)) {
+        return res.status(400).json({
+          error: "session_id must be a valid integer.",
+        });
+      }
+
+      const result = await codingAssessmentService.completeAssessment({
+        userId: req.user.sub,
+        sessionId,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post("/initial-coding/activate", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can activate the coding assessment.",
+      });
+    }
+
+    const { session_id } = req.body || {};
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result = await codingAssessmentService.activateAssessment({
+      userId: req.user.sub,
+      sessionId,
+    });
+
+    return res.status(200).json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/initial-coding/pause", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can pause the coding assessment.",
+      });
+    }
+
+    const { session_id } = req.body || {};
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result = await codingAssessmentService.pauseAssessment({
+      userId: req.user.sub,
+      sessionId,
+    });
+
+    return res.status(200).json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/initial-coding/heartbeat", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can send coding assessment heartbeat.",
+      });
+    }
+
+    const { session_id } = req.body || {};
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result = await codingAssessmentService.heartbeatAssessment({
+      userId: req.user.sub,
+      sessionId,
+    });
+
+    return res.status(200).json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+//FINAL ASSESSMENT ROUTES
+
+// Final QUIZ API 
+// React -> Node -> DB -> Node -> AI/ML -> Node -> DB -> React
+
+router.post("/final-quiz/start", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can start the final quiz.",
+      });
+    }
+
+    const result = await assessmentService.startFinalAssessment(
+      req.user.sub
+    );
+
+    return res.status(201).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/final-quiz/activate", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can activate the final quiz.",
+      });
+    }
+
+    const { session_id } = req.body || {};
+
+    if (session_id === undefined) {
+      return res.status(400).json({
+        error: "session_id is required.",
+      });
+    }
+
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result =
+      await assessmentService.activateFinalAssessment(
+        req.user.sub,
+        sessionId
+      );
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/final-quiz/pause", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can pause the final quiz.",
+      });
+    }
+
+    const { session_id } = req.body || {};
+
+    if (session_id === undefined) {
+      return res.status(400).json({
+        error: "session_id is required.",
+      });
+    }
+
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result =
+      await assessmentService.pauseFinalAssessment(
+        req.user.sub,
+        sessionId
+      );
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/final-quiz/heartbeat", authRequired, async (req, res, next) => {
+    try {
+      if (req.user.role !== "student") {
+        return res.status(403).json({
+          error: "Only students can send final quiz heartbeat.",
+        });
+      }
+
+      const { session_id } = req.body || {};
+
+      if (session_id === undefined) {
+        return res.status(400).json({
+          error: "session_id is required.",
+        });
+      }
+
+      const sessionId = Number(session_id);
+
+      if (!Number.isInteger(sessionId)) {
+        return res.status(400).json({
+          error: "session_id must be a valid integer.",
+        });
+      }
+
+      const result =
+        await assessmentService.heartbeatFinalAssessment(
+          req.user.sub,
+          sessionId
+        );
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post("/final-quiz/answer", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can submit final quiz answers.",
+      });
+    }
+
+    const {
+      session_id,
+      question_id,
+      answer,
+    } = req.body || {};
+
+    if (
+      session_id === undefined ||
+      question_id === undefined ||
+      !answer
+    ) {
+      return res.status(400).json({
+        error: "session_id, question_id and answer are required.",
+      });
+    }
+
+    const sessionId = Number(session_id);
+    const questionId = Number(question_id);
+
+    if (
+      !Number.isInteger(sessionId) ||
+      !Number.isInteger(questionId)
+    ) {
+      return res.status(400).json({
+        error: "session_id and question_id must be valid integers.",
+      });
+    }
+
+    const normalizedAnswer =
+      String(answer).trim().toUpperCase();
+
+    if (!["A", "B", "C", "D"].includes(normalizedAnswer)) {
+      return res.status(400).json({
+        error: "answer must be A, B, C or D.",
+      });
+    }
+
+    const result =
+      await assessmentService.submitFinalAssessmentAnswer(
+        req.user.sub,
+        sessionId,
+        questionId,
+        normalizedAnswer
+      );
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+
 
 module.exports = router;

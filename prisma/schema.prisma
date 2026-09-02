@@ -9,39 +9,42 @@ datasource db {
 }
 
 model User {
-  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                String                @db.VarChar(255)
-  email               String                @unique @db.VarChar(255)
-  role_id             String                @db.Uuid
-  password_hash       String
-  status              String                @default("active") @db.VarChar(50)
-  last_login          DateTime?             @db.Timestamp(6)
-  created_at          DateTime              @default(now()) @db.Timestamp(6)
-  domain_role_id      String?               @db.Uuid
-  achievements        Achievement[]
-  announcements       Announcement[]        @relation("EducatorAnnouncements")
-  applications        Application[]
-  assessments         Assessment[]
-  authOtps            AuthOtp?
-  certificates        Certificate[]
-  community_bookmarks community_bookmarks[]
-  community_comments  community_comments[]
-  community_posts     community_posts[]
-  community_reactions community_reactions[]
-  taughtCourses       Course[]              @relation("EducatorCourses")
-  enrollments         Enrollment[]
-  gapReports          GapReport[]
-  jobs                Job[]                 @relation("EmployerJobs")
-  notifications       Notification[]
-  profile             Profile?
-  progress            Progress[]
-  quizSessions        QuizSession[]
-  recommendations     Recommendation[]
-  refreshTokens       RefreshToken[]
-  subscriptions       Subscription[]
-  tasks               Task[]
-  role                Role                  @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_users_role")
-  domainRole          DomainRole?           @relation(fields: [domain_role_id], references: [domain_role_id])
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                    String                    @db.VarChar(255)
+  email                   String                    @unique @db.VarChar(255)
+  role_id                 String                    @db.Uuid
+  password_hash           String
+  status                  String                    @default("active") @db.VarChar(50)
+  last_login              DateTime?                 @db.Timestamp(6)
+  created_at              DateTime                  @default(now()) @db.Timestamp(6)
+  domain_role_id          String?                   @db.Uuid
+  achievements            Achievement[]
+  announcements           Announcement[]            @relation("EducatorAnnouncements")
+  applications            Application[]
+  assessments             Assessment[]
+  authOtps                AuthOtp?
+  certificates            Certificate[]
+  coding_submissions      coding_submissions[]
+  community_bookmarks     community_bookmarks[]
+  community_comments      community_comments[]
+  community_posts         community_posts[]
+  community_reactions     community_reactions[]
+  taughtCourses           Course[]                  @relation("EducatorCourses")
+  enrollments             Enrollment[]
+  gapReports              GapReport[]
+  jobs                    Job[]                     @relation("EmployerJobs")
+  notifications           Notification[]
+  profile                 Profile?
+  progress                Progress[]
+  quizSessions            QuizSession[]
+  recommendations         Recommendation[]
+  refreshTokens           RefreshToken[]
+  student_asked_questions student_asked_questions[]
+  subscriptions           Subscription[]
+  tasks                   Task[]
+  user_coding_sessions    user_coding_sessions[]
+  role                    Role                      @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_users_role")
+  domainRole              DomainRole?               @relation(fields: [domain_role_id], references: [domain_role_id])
 
   @@index([role_id], map: "idx_users_role")
   @@index([domain_role_id])
@@ -484,52 +487,57 @@ model DifficultyLevel {
 }
 
 model Question {
-  question_id    Int             @id @default(autoincrement())
-  skill_id       Int
-  difficulty_id  Int
-  question_text  String
-  option_a       String
-  option_b       String
-  option_c       String
-  option_d       String
-  correct_option String          @db.Char(1)
-  marks          Int?            @default(1)
-  is_active      Boolean?        @default(true)
-  created_at     DateTime?       @default(now()) @db.Timestamp(6)
-  difficulty     DifficultyLevel @relation(fields: [difficulty_id], references: [difficulty_id], onDelete: NoAction, onUpdate: NoAction)
-  skill          Skill           @relation(fields: [skill_id], references: [skill_id], onDelete: NoAction, onUpdate: NoAction)
-  answers        StudentAnswer[]
+  question_id     Int             @id @default(autoincrement())
+  skill_id        Int
+  difficulty_id   Int
+  question_text   String
+  option_a        String
+  option_b        String
+  option_c        String
+  option_d        String
+  correct_option  String          @db.Char(1)
+  marks           Int?            @default(1)
+  is_active       Boolean?        @default(true)
+  created_at      DateTime?       @default(now()) @db.Timestamp(6)
+  assessment_type assessment_type @default(INITIAL)
+  difficulty      DifficultyLevel @relation(fields: [difficulty_id], references: [difficulty_id], onDelete: NoAction, onUpdate: NoAction)
+  skill           Skill           @relation(fields: [skill_id], references: [skill_id], onDelete: NoAction, onUpdate: NoAction)
+  answers         StudentAnswer[]
 
+  @@index([skill_id, assessment_type, difficulty_id, is_active], map: "idx_questions_quiz_lookup")
   @@map("questions")
   @@schema("education")
 }
 
 model QuizSession {
-  session_id          Int                  @id @default(autoincrement())
-  user_id             String               @db.Uuid
-  domain_role_id      String               @db.Uuid
-  start_time          DateTime             @default(now()) @db.Timestamp(6)
-  end_time            DateTime?            @db.Timestamp(6)
-  status              String               @default("In Progress") @db.VarChar(20)
-  total_questions     Int                  @default(50)
-  questions_answered  Int                  @default(0)
-  current_skill_id    Int?
-  deadline_at         DateTime?            @db.Timestamp(6)
-  current_question_id Int?
-  remaining_seconds   Int?
-  paused_at           DateTime?            @db.Timestamp(6)
-  proctoring_events   proctoring_events[]
-  domainRole          DomainRole           @relation(fields: [domain_role_id], references: [domain_role_id], onUpdate: NoAction)
-  user                User                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  quiz_state          quiz_state[]
-  answers             StudentAnswer[]
-  skillResults        StudentSkillResult[]
+  session_id           Int                   @id @default(autoincrement())
+  user_id              String                @db.Uuid
+  domain_role_id       String                @db.Uuid
+  start_time           DateTime              @default(now()) @db.Timestamp(6)
+  end_time             DateTime?             @db.Timestamp(6)
+  status               String                @default("In Progress") @db.VarChar(20)
+  total_questions      Int                   @default(50)
+  questions_answered   Int                   @default(0)
+  current_skill_id     Int?
+  deadline_at          DateTime?             @db.Timestamp(6)
+  current_question_id  Int?
+  remaining_seconds    Int?
+  paused_at            DateTime?             @db.Timestamp(6)
+  assessment_type      assessment_type       @default(INITIAL)
+  proctoring_events    proctoring_events[]
+  domainRole           DomainRole            @relation(fields: [domain_role_id], references: [domain_role_id], onUpdate: NoAction)
+  user                 User                  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  quiz_state           quiz_state[]
+  answers              StudentAnswer[]
+  skillResults         StudentSkillResult[]
+  user_coding_sessions user_coding_sessions?
 
   @@index([current_skill_id], map: "idx_quiz_sessions_current_skill")
   @@index([current_question_id], map: "idx_quiz_sessions_current_question")
   @@index([domain_role_id], map: "idx_quiz_sessions_domain_role")
   @@index([status], map: "idx_quiz_sessions_status")
   @@index([user_id], map: "idx_quiz_sessions_user")
+  @@index([user_id, assessment_type, status], map: "idx_quiz_sessions_user_assessment_status")
   @@map("quiz_sessions")
   @@schema("education")
 }
@@ -723,6 +731,110 @@ model proctoring_events {
   @@schema("education")
 }
 
+model coding_questions {
+  question_id             Int                       @id @default(autoincrement())
+  title                   String                    @db.VarChar(255)
+  description             String
+  input_format            String?
+  output_format           String?
+  constraints_text        String?
+  supported_languages     String[]                  @default(["python", "cpp", "java", "javascript", "c"])
+  default_time_limit_ms   Int?                      @default(2000)
+  default_memory_limit_mb Int?                      @default(256)
+  total_marks             Int?                      @default(100)
+  created_at              DateTime?                 @default(now()) @db.Timestamp(6)
+  updated_at              DateTime?                 @default(now()) @db.Timestamp(6)
+  coding_submissions      coding_submissions[]
+  coding_test_cases       coding_test_cases[]
+  student_asked_questions student_asked_questions[]
+
+  @@schema("education")
+}
+
+model coding_submissions {
+  submission_id           Int                       @id @default(autoincrement())
+  user_id                 String                    @db.Uuid
+  session_id              Int
+  question_id             Int
+  language                String                    @db.VarChar(50)
+  source_code             String
+  status                  String                    @db.VarChar(50)
+  score                   Decimal?                  @default(0.00) @db.Decimal(5, 2)
+  total_marks             Decimal?                  @default(100.00) @db.Decimal(5, 2)
+  passed_test_cases       Int?                      @default(0)
+  total_test_cases        Int?                      @default(0)
+  execution_time_ms       Int?                      @default(0)
+  submitted_at            DateTime?                 @default(now()) @db.Timestamp(6)
+  coding_questions        coding_questions          @relation(fields: [question_id], references: [question_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_submission_question")
+  user_coding_sessions    user_coding_sessions      @relation(fields: [session_id], references: [session_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_submission_session")
+  users                   User                      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_submission_user")
+  submission_test_results submission_test_results[]
+
+  @@schema("education")
+}
+
+model coding_test_cases {
+  test_case_id            Int                       @id @default(autoincrement())
+  question_id             Int
+  input_data              String?                   @default("")
+  expected_output         String
+  is_hidden               Boolean?                  @default(true)
+  time_limit_ms           Int?
+  memory_limit_mb         Int?
+  weight                  Int?                      @default(1)
+  created_at              DateTime?                 @default(now()) @db.Timestamp(6)
+  coding_questions        coding_questions          @relation(fields: [question_id], references: [question_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_testcase_question")
+  submission_test_results submission_test_results[]
+
+  @@index([question_id], map: "idx_coding_test_cases_question")
+  @@schema("education")
+}
+
+model student_asked_questions {
+  user_id          String           @db.Uuid
+  question_id      Int
+  asked_at         DateTime?        @default(now()) @db.Timestamp(6)
+  coding_questions coding_questions @relation(fields: [question_id], references: [question_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_asked_question")
+  users            User             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_asked_user")
+
+  @@id([user_id, question_id])
+  @@schema("education")
+}
+
+model submission_test_results {
+  result_id          Int                @id @default(autoincrement())
+  submission_id      Int
+  test_case_id       Int
+  status             String             @db.VarChar(50)
+  actual_output      String?
+  expected_output    String?
+  execution_time_ms  Int?               @default(0)
+  error_message      String?
+  coding_test_cases  coding_test_cases  @relation(fields: [test_case_id], references: [test_case_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_test_result_case")
+  coding_submissions coding_submissions @relation(fields: [submission_id], references: [submission_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_test_result_submission")
+
+  @@schema("education")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model user_coding_sessions {
+  session_id          Int                  @id
+  user_id             String               @db.Uuid
+  total_score         Decimal?             @default(0.00) @db.Decimal(5, 2)
+  max_score           Decimal?             @default(300.00) @db.Decimal(5, 2)
+  questions_completed Int?                 @default(0)
+  status              String?              @default("In Progress") @db.VarChar(20)
+  started_at          DateTime?            @default(now()) @db.Timestamp(6)
+  completed_at        DateTime?            @db.Timestamp(6)
+  deadline_at         DateTime?
+  remaining_seconds   Int?
+  coding_submissions  coding_submissions[]
+  quiz_sessions       QuizSession          @relation(fields: [session_id], references: [session_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_coding_parent_session")
+  users               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_session_user")
+
+  @@schema("education")
+}
+
 enum community_post_status {
   Draft
   Published
@@ -761,6 +873,13 @@ enum community_visibility {
   Educators
   Employers
   Admins
+
+  @@schema("education")
+}
+
+enum assessment_type {
+  INITIAL
+  FINAL
 
   @@schema("education")
 }

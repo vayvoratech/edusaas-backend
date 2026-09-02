@@ -1066,18 +1066,19 @@ module.exports = {
       },
     }),
 
-  findBySkill: async (skill_id) =>
-    prisma.question.findMany({
-      where: {
-        skill_id,
-      },
-      include: {
-        difficulty: true,
-      },
-      orderBy: {
-        question_id: "asc",
-      },
-    }),
+  findBySkill: async (skill_id, assessment_type = "INITIAL") =>
+  prisma.question.findMany({
+    where: {
+      skill_id,
+      assessment_type,
+    },
+    include: {
+      difficulty: true,
+    },
+    orderBy: {
+      question_id: "asc",
+    },
+  }),
 
   findByDifficulty: async (difficulty_id) =>
     prisma.question.findMany({
@@ -1157,26 +1158,11 @@ module.exports = {
       },
     }),
 
-    findLatestByUser: async (user_id) =>
-      prisma.quizSession.findFirst({
-        where: {
-          user_id,
-        },
-        include: {
-          domainRole: true,
-        },
-        orderBy: {
-          start_time: "desc",
-        },
-      }),
-
-    findActiveByUser: async (user_id) =>
+  findLatestByUser: async (user_id, assessment_type = "INITIAL") =>
     prisma.quizSession.findFirst({
       where: {
         user_id,
-        status: {
-          in: ["In Progress", "Paused"],
-        },
+        assessment_type,
       },
       include: {
         domainRole: true,
@@ -1185,6 +1171,51 @@ module.exports = {
         start_time: "desc",
       },
     }),
+
+  findLatestByUserAndAssessmentType: async ( user_id, assessment_type) =>
+    prisma.quizSession.findFirst({
+      where: {
+        user_id,
+        assessment_type,
+      },
+      include: {
+        domainRole: true,
+      },
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
+
+  findActiveByUser: async (user_id, assessment_type = "INITIAL") =>
+  prisma.quizSession.findFirst({
+    where: {
+      user_id,
+      assessment_type,
+      status: {
+        in: ["In Progress", "Paused"],
+      },
+    },
+    include: {
+      domainRole: true,
+    },
+    orderBy: {
+      start_time: "desc",
+    },
+  }),
+
+  findInProgressByUser: async (user_id) =>
+  prisma.quizSession.findFirst({
+    where: {
+      user_id,
+      status: "In Progress",
+    },
+    include: {
+      domainRole: true,
+    },
+    orderBy: {
+      start_time: "desc",
+    },
+  }),
 
   findCompletedByUser: async (user_id) =>
     prisma.quizSession.findFirst({
@@ -1209,10 +1240,11 @@ module.exports = {
       });
     },
   
-  findActiveWithResumeData: async (user_id) =>
+  findActiveWithResumeData: async (user_id, assessment_type = "INITIAL") =>
     prisma.quizSession.findFirst({
       where: {
         user_id,
+        assessment_type,
         status: "In Progress",
       },
       include: {
@@ -1243,6 +1275,244 @@ module.exports = {
         })
       )
     ),
+  },
+
+ codingSessions: {
+  findBySessionId: async (session_id) =>
+    prisma.user_coding_sessions.findUnique({
+      where: {
+        session_id,
+      },
+    }),
+
+  findByUserId: async (user_id) =>
+    prisma.user_coding_sessions.findMany({
+      where: {
+        user_id,
+      },
+      orderBy: {
+        started_at: "desc",
+      },
+    }),
+
+  findBySessionAndUser: async (sessionId, userId) => {
+    const session =
+      await prisma.user_coding_sessions.findUnique({
+        where: {
+          session_id: Number(sessionId),
+        },
+      });
+
+    if (!session) {
+      return null;
+    }
+
+    if (String(session.user_id) !== String(userId)) {
+      const error = new Error(
+        "Coding session belongs to another user"
+      );
+      error.status = 409;
+      throw error;
+    }
+
+    return session;
+  },
+
+  create: async (data) =>
+    prisma.user_coding_sessions.create({
+      data,
+    }),
+
+  update: async (session_id, data) =>
+    safeQuery(
+      prisma.user_coding_sessions.update({
+        where: {
+          session_id,
+        },
+        data,
+      })
+    ),
+  },
+
+  codingQuestions: {
+    findById: async (question_id) =>
+      prisma.coding_questions.findUnique({
+        where: {
+          question_id,
+        },
+        include: {
+          coding_test_cases: true,
+        },
+      }),
+
+    list: async () =>
+      prisma.coding_questions.findMany({
+        orderBy: {
+          question_id: "asc",
+        },
+      }),
+
+    findByIds: async (questionIds) =>
+      prisma.coding_questions.findMany({
+        where: {
+          question_id: {
+            in: questionIds,
+          },
+        },
+        include: {
+          coding_test_cases: true,
+        },
+      }),
+
+    findUnseen: async (askedQuestionIds, limit = 3) =>
+      prisma.coding_questions.findMany({
+        where: askedQuestionIds.length
+          ? {
+              question_id: {
+                notIn: askedQuestionIds,
+              },
+            }
+          : {},
+        orderBy: {
+          question_id: "asc",
+        },
+        take: limit,
+      }),
+  },
+
+  codingTestCases: {
+    findByQuestionId: async (question_id) =>
+      prisma.coding_test_cases.findMany({
+        where: {
+          question_id,
+        },
+        orderBy: {
+          test_case_id: "asc",
+        },
+      }),
+  },
+
+  codingSubmissions: {
+    findById: async (submission_id) =>
+      prisma.coding_submissions.findUnique({
+        where: {
+          submission_id,
+        },
+        include: {
+          coding_questions: true,
+          submission_test_results: true,
+        },
+      }),
+
+    findBySessionId: async (session_id) =>
+      prisma.coding_submissions.findMany({
+        where: {
+          session_id,
+        },
+        include: {
+          submission_test_results: true,
+        },
+        orderBy: {
+          submitted_at: "desc",
+        },
+      }),
+
+    create: async (data) =>
+      prisma.coding_submissions.create({
+        data,
+      }),
+
+    update: async (submission_id, data) =>
+      safeQuery(
+        prisma.coding_submissions.update({
+          where: {
+            submission_id,
+          },
+          data,
+        }),
+      ),
+  },
+
+  submissionTestResults: {
+    findBySubmissionId: async (submission_id) =>
+      prisma.submission_test_results.findMany({
+        where: {
+          submission_id,
+        },
+        orderBy: {
+          result_id: "asc",
+        },
+      }),
+
+    createMany: async (data) =>
+      prisma.submission_test_results.createMany({
+        data,
+      }),
+  },
+
+  studentAskedQuestions: {
+    find: async (user_id, question_id) =>
+      prisma.student_asked_questions.findUnique({
+        where: {
+          user_id_question_id: {
+            user_id,
+            question_id,
+          },
+        },
+      }),
+
+    create: async (data) =>
+      prisma.student_asked_questions.upsert({
+        where: {
+          user_id_question_id: {
+            user_id: data.user_id,
+            question_id: data.question_id,
+          },
+        },
+        update: {},
+        create: data,
+      }),
+
+    createMany: async (data) =>
+      prisma.student_asked_questions.createMany({
+        data,
+        skipDuplicates: true,
+      }),
+
+    listByUser: async (user_id) =>
+      prisma.student_asked_questions.findMany({
+        where: {
+          user_id,
+        },
+        orderBy: {
+          asked_at: "asc",
+        },
+      }),
+
+    listRecentByUser: async (user_id, limit = 3) =>
+      prisma.student_asked_questions.findMany({
+        where: {
+          user_id,
+        },
+        orderBy: {
+          asked_at: "desc",
+        },
+        take: limit,
+      }),
+
+    findAskedQuestionIds: async (user_id) => {
+      const asked =
+        await prisma.student_asked_questions.findMany({
+          where: {
+            user_id,
+          },
+          select: {
+            question_id: true,
+          },
+        });
+
+      return asked.map((item) => item.question_id);
+    },
   },
 
   proctoringEvents: {
@@ -1479,204 +1749,6 @@ module.exports = {
       }),
   },
 
-  communityPosts: {
-
-    async create(data) {
-      return mapCommunityPost(
-        await prisma.community_posts.create({
-          data,
-          include: communityPostInclude,
-        })
-      );
-    },
-
-    async findById(id) {
-      return mapCommunityPost(
-        await prisma.community_posts.findUnique({
-          where: { id },
-          include: communityPostInclude,
-        })
-      );
-    },
-
-    async getFeed({
-      page = 1,
-      limit = 10,
-      post_type,
-      visibility,
-      author_id,
-    } = {}) {
-
-      const where = {
-        deleted_at: null,
-        status: "Published",
-      };
-
-      if (post_type) {
-        where.post_type = post_type;
-      }
-
-      if (visibility) {
-        where.visibility = visibility;
-      }
-
-      if (author_id) {
-        where.author_id = author_id;
-      }
-
-      return (
-        await prisma.community_posts.findMany({
-          where,
-
-          include: communityPostInclude,
-
-          orderBy: {
-            created_at: "desc",
-          },
-
-          skip: (page - 1) * limit,
-
-          take: limit,
-        })
-      ).map(mapCommunityPost);
-    },
-
-    async findByAuthor(author_id) {
-      return (
-        await prisma.community_posts.findMany({
-          where: {
-            author_id,
-            deleted_at: null,
-          },
-          include: communityPostInclude,
-          orderBy: {
-            created_at: "desc",
-          },
-        })
-      ).map(mapCommunityPost);
-    },
-
-    async update(id, data) {
-      return mapCommunityPost(
-        await safeQuery(
-          prisma.community_posts.update({
-            where: { id },
-            data,
-            include: communityPostInclude,
-          })
-        )
-      );
-    },
-
-    async softDelete(id) {
-      return mapCommunityPost(
-        await safeQuery(
-          prisma.community_posts.update({
-            where: { id },
-            data: {
-              deleted_at: new Date(),
-            },
-            include: communityPostInclude,
-          })
-        )
-      );
-    },
-
-    async restore(id) {
-      return mapCommunityPost(
-        await safeQuery(
-          prisma.community_posts.update({
-            where: { id },
-            data: {
-              deleted_at: null,
-            },
-            include: communityPostInclude,
-          })
-        )
-      );
-    },
-
-    async exists(id) {
-
-      const count = await prisma.community_posts.count({
-        where: {
-          id,
-          deleted_at: null,
-        },
-      });
-
-      return count > 0;
-    },
-
-    async count(filters = {}) {
-
-      const where = {
-        deleted_at: null,
-      };
-
-      if (filters.author_id) {
-        where.author_id = filters.author_id;
-      }
-
-      if (filters.post_type) {
-        where.post_type = filters.post_type;
-      }
-
-      if (filters.status) {
-        where.status = filters.status;
-      }
-
-      return prisma.community_posts.count({
-        where,
-      });
-    },
-
-    async incrementCommentCount(id) {
-      return prisma.community_posts.update({
-        where: { id },
-        data: {
-          comments_count: {
-            increment: 1,
-          },
-        },
-      });
-    },
-
-    async decrementCommentCount(id) {
-      return prisma.community_posts.update({
-        where: { id },
-        data: {
-          comments_count: {
-            decrement: 1,
-          },
-        },
-      });
-    },
-
-    async incrementReactionCount(id) {
-      return prisma.community_posts.update({
-        where: { id },
-        data: {
-          reactions_count: {
-            increment: 1,
-          },
-        },
-      });
-    },
-
-    async decrementReactionCount(id) {
-      return prisma.community_posts.update({
-        where: { id },
-        data: {
-          reactions_count: {
-            decrement: 1,
-          },
-        },
-      });
-    },
-
-  },
-
   insights: async () => {
     const [users, courses, enrollments, jobs, applications, assessments] =
       await Promise.all([
@@ -1797,6 +1869,7 @@ module.exports = {
       user,
       initialAssessment,
       gapReport,
+      codingAssessment,
       enrollments,
       tasks,
       achievements,
@@ -1851,6 +1924,15 @@ module.exports = {
     prisma.gapReport.findFirst({
       where: {
         user_id,
+      },
+    }),
+
+    prisma.user_coding_sessions.findFirst({
+      where: {
+        user_id,
+      },
+      orderBy: {
+        started_at: "desc",
       },
     }),
 
@@ -2132,7 +2214,7 @@ module.exports = {
     studentName: user?.name,
     domainRoleId: user?.domain_role_id,
     domainRole: user?.domainRole?.domain_name || null,
-    assessmentCompleted: !!initialAssessment,
+    assessmentCompleted: !!initialAssessment && codingAssessment?.status === "Completed",
     learningProgressPercentage,
     completedLessons,
     totalLessons,

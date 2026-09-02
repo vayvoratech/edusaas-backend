@@ -65,6 +65,7 @@ async function validateProctoringStart(message) {
   }
 
   const sessionId = Number(session_id);
+  const assessmentype = String (message.assessment_type || "QUIZ").toUpperCase();
 
   if (!Number.isInteger(sessionId)) {
     const error = new Error(
@@ -77,13 +78,30 @@ async function validateProctoringStart(message) {
   }
 
   /*
-   * IMPORTANT:
-   *
-   * Node verifies that this assessment session actually
-   * belongs to the authenticated user.
-   */
-  const session =
-    await repo.quizSessions.findById(sessionId);
+  * IMPORTANT:
+  *
+  * Node verifies that this assessment session actually
+  * belongs to the authenticated user.
+  *
+  * QUIZ    -> quizSessions
+  * CODING  -> codingSessions
+  */
+  const assessmentType = String(
+    message.assessment_type || "QUIZ"
+  ).toUpperCase();
+
+  let session;
+
+  if (assessmentType === "CODING") {
+    session =
+      await repo.codingSessions.findBySessionAndUser(
+        sessionId,
+        userId
+      );
+  } else {
+    session =
+      await repo.quizSessions.findById(sessionId);
+  }
 
   if (!session) {
     const error = new Error(
@@ -95,7 +113,7 @@ async function validateProctoringStart(message) {
     throw error;
   }
 
-  if (session.user_id !== userId) {
+  if (String(session.user_id) !== String(userId)) {
     const error = new Error(
       "Assessment session does not belong to this user."
     );
@@ -119,6 +137,7 @@ async function validateProctoringStart(message) {
     userId,
     sessionId,
     session,
+    assessmentType,
   };
 }
 
