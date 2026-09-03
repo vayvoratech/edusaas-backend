@@ -2765,12 +2765,28 @@ async function getAssessmentOverview(userId) {
       userId,
       "INITIAL"
     ),
+
     repo.quizSessions.findLatestByUserAndAssessmentType(
       userId,
       "FINAL"
     ),
+
     repo.gapReports.findByUserId(userId),
   ]);
+
+  // ------------------------------------------------------------
+  // CODING ASSESSMENT
+  // ------------------------------------------------------------
+  // Coding assessment belongs to the Initial Quiz session.
+  // Only look it up once the Initial Quiz has been completed.
+  let codingSession = null;
+
+  if (initialSession?.status === "Completed") {
+    codingSession = await repo.codingSessions.findBySessionAndUser(
+      initialSession.session_id,
+      userId
+    );
+  }
 
   return {
     initialAssessment: {
@@ -2779,6 +2795,13 @@ async function getAssessmentOverview(userId) {
       questionsAnswered: initialSession?.questions_answered || 0,
       totalQuestions: initialSession?.total_questions || 0,
       readinessScore: gapReport?.readiness_score ?? null,
+    },
+
+    codingAssessment: {
+      status: codingSession?.status || "Not Started",
+      sessionId: codingSession?.session_id || null,
+      remainingSeconds:
+        Number(codingSession?.remaining_seconds || 0),
     },
 
     finalAssessment: {

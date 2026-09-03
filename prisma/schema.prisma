@@ -24,13 +24,15 @@ model User {
   assessments             Assessment[]
   authOtps                AuthOtp?
   certificates            Certificate[]
-  coding_submissions      coding_submissions[]
+  courseProgress          CourseProgress[]
+  courseRatings           CourseRating[]
   community_bookmarks     community_bookmarks[]
   community_comments      community_comments[]
   community_posts         community_posts[]
   community_reactions     community_reactions[]
   taughtCourses           Course[]                  @relation("EducatorCourses")
   enrollments             Enrollment[]
+  final_submissions       final_submissions[]
   gapReports              GapReport[]
   jobs                    Job[]                     @relation("EmployerJobs")
   notifications           Notification[]
@@ -40,9 +42,12 @@ model User {
   recommendations         Recommendation[]
   refreshTokens           RefreshToken[]
   student_asked_questions student_asked_questions[]
+  studentProfiles         StudentProfile[]
+  studentSkills           StudentSkill[]
   subscriptions           Subscription[]
   tasks                   Task[]
   user_coding_sessions    user_coding_sessions[]
+  coding_submissions      coding_submissions[]
   role                    Role                      @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_users_role")
   domainRole              DomainRole?               @relation(fields: [domain_role_id], references: [domain_role_id])
 
@@ -95,7 +100,6 @@ model Profile {
   institution                  String?
   company                      String?
   preferences                  Json?
-  resume                       Json?
   initial_assessment_completed Boolean @default(false)
   user                         User    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_profile_user")
 
@@ -139,26 +143,89 @@ model GapReport {
   @@schema("education")
 }
 
+model CourseRating {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String   @db.Uuid
+  course_id  String   @db.Uuid
+  rating     Float
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  updated_at DateTime @default(now()) @db.Timestamp(6)
+  course     Course   @relation(fields: [course_id], references: [id])
+  user       User     @relation(fields: [user_id], references: [id])
+
+  @@map("course_ratings")
+  @@schema("education")
+}
+
 model Course {
-  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  title           String           @db.VarChar(255)
-  description     String?
-  provider        String?          @db.VarChar(255)
-  category        String?          @db.VarChar(255)
-  difficulty      String?          @db.VarChar(50)
-  status          String           @default("active") @db.VarChar(50)
-  educator_id     String?          @db.Uuid
-  thumbnail_url   String?          @db.VarChar(500)
-  created_at      DateTime         @default(now()) @db.Timestamp(6)
-  certificates    Certificate[]
-  educator        User?            @relation("EducatorCourses", fields: [educator_id], references: [id], onUpdate: NoAction, map: "fk_course_educator")
-  enrollments     Enrollment[]
-  lessons         Lesson[]
-  recommendations Recommendation[]
-  tasks           Task[]
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title               String               @db.VarChar(255)
+  description         String?
+  provider            String?              @db.VarChar(255)
+  category            String?              @db.VarChar(255)
+  difficulty          String?              @db.VarChar(50)
+  status              String               @default("active") @db.VarChar(50)
+  educator_id         String?              @db.Uuid
+  created_at          DateTime             @default(now()) @db.Timestamp(6)
+  thumbnail_url       String?              @db.VarChar(500)
+  certificates        Certificate[]
+  educator            User?                @relation("EducatorCourses", fields: [educator_id], references: [id], onUpdate: NoAction, map: "fk_course_educator")
+  enrollments         Enrollment[]
+  recommendations     Recommendation[]
+  tasks               Task[]
+  coursePrerequisites CoursePrerequisite[] @relation("CoursePrerequisites")
+  prerequisiteFor     CoursePrerequisite[] @relation("PrerequisiteCourse")
+  courseProgress      CourseProgress[]
+  courseRatings       CourseRating[]
+  courseSkills        CourseSkill[]
+  lessons             Lesson[]
 
   @@index([educator_id], map: "idx_courses_educator")
   @@map("courses")
+  @@schema("education")
+}
+
+model CoursePrerequisite {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  course_id              String   @db.Uuid
+  prerequisite_course_id String   @db.Uuid
+  created_at             DateTime @default(now()) @db.Timestamp(6)
+  updated_at             DateTime @default(now()) @db.Timestamp(6)
+
+  course       Course @relation("CoursePrerequisites", fields: [course_id], references: [id])
+  prerequisite Course @relation("PrerequisiteCourse", fields: [prerequisite_course_id], references: [id])
+
+  @@map("course_prerequisites")
+  @@schema("education")
+}
+
+model CourseProgress {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id           String   @db.Uuid
+  course_id         String   @db.Uuid
+  quiz_score        Float?
+  assignment_status String?
+  created_at        DateTime @default(now()) @db.Timestamp(6)
+
+  course Course @relation(fields: [course_id], references: [id])
+  user   User   @relation(fields: [user_id], references: [id])
+
+  @@map("course_progress")
+  @@schema("education")
+}
+
+model CourseSkill {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  course_id   String   @db.Uuid
+  skill_id    Int
+  skill_level Int?
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+  updated_at  DateTime @default(now()) @db.Timestamp(6)
+
+  course Course @relation(fields: [course_id], references: [id])
+  skill  Skill  @relation(fields: [skill_id], references: [skill_id])
+
+  @@map("course_skills")
   @@schema("education")
 }
 
@@ -179,34 +246,98 @@ model Enrollment {
   @@schema("education")
 }
 
+model final_submissions {
+  submission_id      String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id            String               @db.Uuid
+  domain_role_id     String               @db.Uuid
+  assignment_id      String               @db.Uuid
+  code               String
+  submitted_at       DateTime?            @default(now()) @db.Timestamptz(6)
+  domain_roles       DomainRole           @relation(fields: [domain_role_id], references: [domain_role_id], onDelete: NoAction, onUpdate: NoAction, map: "fk_final_submission_domain_roles")
+  users              User                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_final_submission_user")
+  plagiarism_checks  plagiarism_checks[]
+  plagiarism_matches plagiarism_matches[]
+
+  @@schema("education")
+}
+
+model plagiarism_checks {
+  plagiarism_check_id String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  submission_id       String    @db.Uuid
+  status              String    @db.VarChar(30)
+  highest_similarity  Decimal?  @db.Decimal(5, 2)
+  comparison_count    Int       @default(0)
+  checked_at          DateTime? @default(now()) @db.Timestamptz(6)
+
+  final_submissions  final_submissions    @relation(fields: [submission_id], references: [submission_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_plagiarism_check_submission")
+  plagiarism_matches plagiarism_matches[]
+
+  @@schema("education")
+}
+
+model plagiarism_matches {
+  match_id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  plagiarism_check_id         String    @db.Uuid
+  matched_submission_id       String    @db.Uuid
+  original_token_similarity   Decimal?  @db.Decimal(5, 2)
+  normalized_token_similarity Decimal?  @db.Decimal(5, 2)
+  weighted_ast_similarity     Decimal?  @db.Decimal(5, 2)
+  final_similarity            Decimal?  @db.Decimal(5, 2)
+  risk_level                  String?   @db.VarChar(30)
+  created_at                  DateTime? @default(now()) @db.Timestamptz(6)
+
+  plagiarism_checks plagiarism_checks @relation(fields: [plagiarism_check_id], references: [plagiarism_check_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_plagiarism_match_check")
+  final_submissions final_submissions @relation(fields: [matched_submission_id], references: [submission_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_plagiarism_match_submission")
+
+  @@schema("education")
+}
+
 model Job {
-  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  employer_id     String        @db.Uuid
-  title           String        @db.VarChar(255)
-  description     String?
-  requirements    String?
-  required_skills String[]
-  status          String        @default("open") @db.VarChar(50)
-  created_at      DateTime      @default(now()) @db.Timestamp(6)
-  applications    Application[]
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employer_id              String   @db.Uuid
+  title                    String   @db.VarChar(255)
+  description              String?
+  requirements             String?
+  required_skills          String[]
+  status                   String   @default("open") @db.VarChar(50)
+  created_at               DateTime @default(now()) @db.Timestamp(6)
+  domain_role_id           String?  @db.Uuid
+  minimum_experience_years Float?   @default(0)
+
+  applications  Application[]
+  jobSkills     JobSkill[]
+  employer      User           @relation("EmployerJobs", fields: [employer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_job_employer")
+  domainRole    DomainRole?    @relation(fields: [domain_role_id], references: [domain_role_id])
   notifications Notification[]
-  employer        User          @relation("EmployerJobs", fields: [employer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_job_employer")
 
   @@index([employer_id], map: "idx_jobs_employer")
   @@map("jobs")
   @@schema("education")
 }
 
+model JobSkill {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  job_id         String @db.Uuid
+  skill_id       Int
+  required_level Int?   @default(1)
+
+  job   Job   @relation(fields: [job_id], references: [id])
+  skill Skill @relation(fields: [skill_id], references: [skill_id])
+
+  @@map("job_skills")
+  @@schema("education")
+}
+
 model Application {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  job_id      String   @db.Uuid
-  student_id  String   @db.Uuid
-  status      String   @default("submitted") @db.VarChar(50)
-  skill_match Float?
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  job_id           String   @db.Uuid
+  student_id       String   @db.Uuid
+  status           String   @default("submitted") @db.VarChar(50)
+  skill_match      Float?
+  applied_at       DateTime @default(now()) @db.Timestamp(6)
   application_data Json?
-  applied_at  DateTime @default(now()) @db.Timestamp(6)
-  job         Job      @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_job")
-  student     User     @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_student")
+  job              Job      @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_job")
+  student          User     @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_student")
 
   @@unique([job_id, student_id], map: "uq_application")
   @@index([job_id], map: "idx_application_job")
@@ -214,18 +345,18 @@ model Application {
   @@map("applications")
   @@schema("education")
 }
-model Notification {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id     String   @db.Uuid
-  job_id      String?  @db.Uuid
-  type        String   @db.VarChar(100)
-  message     String
-  read_status Boolean  @default(false)
-  created_at  DateTime @default(now()) @db.Timestamp(6)
-  expires_at  DateTime? @db.Timestamp(6)
 
-  user        User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_user")
-  job         Job?     @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+model Notification {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String    @db.Uuid
+  type        String    @db.VarChar(100)
+  message     String
+  read_status Boolean   @default(false)
+  created_at  DateTime  @default(now()) @db.Timestamp(6)
+  expires_at  DateTime? @db.Timestamp(6)
+  job_id      String?   @db.Uuid
+  user        User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_user")
+  job         Job?      @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([user_id], map: "idx_notification_user")
   @@index([job_id], map: "idx_notification_job")
@@ -442,29 +573,37 @@ model RefreshToken {
 }
 
 model DomainRole {
-  domain_role_id String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  domain_name    String                @unique @db.VarChar(100)
-  category       String?               @db.VarChar(50)
-  created_at     DateTime?             @default(now()) @db.Timestamp(6)
-  requiredSkills DomainRequiredSkill[]
-  quizSessions   QuizSession[]
-  users          User[]
+  domain_role_id String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  domain_name    String    @unique @db.VarChar(100)
+  category       String?   @db.VarChar(50)
+  created_at     DateTime? @default(now())
+
+  requiredSkills    DomainRequiredSkill[]
+  final_submissions final_submissions[]
+  jobs              Job[]
+  quizSessions      QuizSession[]
+  studentProfiles   StudentProfile[]
+  users             User[]
 
   @@map("domain_roles")
   @@schema("education")
 }
 
 model Skill {
-  skill_id           Int                   @id @default(autoincrement())
-  skill_name         String                @unique @db.VarChar(100)
-  category           String?               @db.VarChar(50)
-  description        String?
-  created_at         DateTime?             @default(now()) @db.Timestamp(6)
+  skill_id    Int       @id @default(autoincrement())
+  skill_name  String    @unique @db.VarChar(100)
+  category    String?   @db.VarChar(50)
+  description String?
+  created_at  DateTime? @default(now())
+
+  courseSkills       CourseSkill[]
   requiredForDomains DomainRequiredSkill[]
+  jobSkills          JobSkill[]
   questions          Question[]
   quiz_state         quiz_state[]
   answers            StudentAnswer[]
   skillResults       StudentSkillResult[]
+  studentSkills      StudentSkill[]
 
   @@map("skills")
   @@schema("education")
@@ -592,6 +731,34 @@ model StudentSkillResult {
   @@schema("education")
 }
 
+model StudentProfile {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String      @db.Uuid
+  domain_role_id   String?     @db.Uuid
+  education_level  String?
+  experience_years Float?      @default(0)
+  profile_score    Float?      @default(0)
+  created_at       DateTime?   @default(now()) @db.Timestamp(6)
+  domainRole       DomainRole? @relation(fields: [domain_role_id], references: [domain_role_id])
+  user             User        @relation(fields: [user_id], references: [id])
+
+  @@map("student_profiles")
+  @@schema("education")
+}
+
+model StudentSkill {
+  id          String @id @db.Uuid
+  user_id     String @db.Uuid
+  skill_id    Int
+  skill_level Int
+
+  skill Skill @relation(fields: [skill_id], references: [skill_id])
+  user  User  @relation(fields: [user_id], references: [id])
+
+  @@map("student_skills")
+  @@schema("education")
+}
+
 model quiz_state {
   session_id         Int
   skill_id           Int
@@ -667,7 +834,7 @@ model community_posts {
   content             String
   post_type           community_post_type
   status              community_post_status @default(Published)
-  visibility          community_visibility[] @default([Public])
+  visibility          community_visibility  @default(Public)
   media_url           String?
   metadata            Json?
   comments_count      Int                   @default(0)
@@ -852,6 +1019,15 @@ enum community_post_status {
   @@schema("education")
 }
 
+enum community_reaction_type {
+  Like
+  Celebrate
+  Support
+  Insightful
+
+  @@schema("education")
+}
+
 enum community_post_type {
   Discussion
   Question
@@ -862,15 +1038,6 @@ enum community_post_type {
   Project
   Achievement
   Event
-
-  @@schema("education")
-}
-
-enum community_reaction_type {
-  Like
-  Celebrate
-  Support
-  Insightful
 
   @@schema("education")
 }

@@ -18,53 +18,75 @@ const repo = require("../data");
 const { authRequired, } = require("../middleware/auth");
 
 //Create Post 
-router.post("/posts", authRequired, upload.array('images', 3), async(req, res, next) => { 
-    try{
-        const {
-            title,
-            content,
-            post_type,
-            media_url =  null,
-        } = req.body;
-        
-        let visibility = req.body.visibility;
-        let metadata = req.body.metadata;
+router.post(
+  "/posts",
+  authRequired,
+  upload.array('images', 3),
+  async (req, res, next) => {
+    try {
+      const {
+        title,
+        content,
+        post_type,
+        media_url = null,
+      } = req.body;
 
-        // Ensure visibility is array if it comes as string from form-data
-        if (typeof visibility === 'string') {
-            try { visibility = JSON.parse(visibility); } catch (e) { visibility = [visibility]; }
+      let visibility = req.body.visibility || "Public";
+      let metadata = req.body.metadata;
+
+      const VALID_VISIBILITIES = [
+        "Public",
+        "Students",
+        "Educators",
+        "Employers",
+        "Admins",
+      ];
+
+      if (!VALID_VISIBILITIES.includes(visibility)) {
+        return res.status(400).json({
+          error: "Invalid visibility value",
+        });
+      }
+
+      if (typeof metadata === 'string' && metadata !== 'null') {
+        try {
+          metadata = JSON.parse(metadata);
+        } catch (e) {
+          return res.status(400).json({
+            error: "Invalid metadata format",
+          });
         }
-        
-        if (typeof metadata === 'string' && metadata !== 'null') {
-            try { metadata = JSON.parse(metadata); } catch (e) { metadata = null; }
-        } else if (metadata === 'null') {
-            metadata = null;
-        }
+      } else if (metadata === 'null') {
+        metadata = null;
+      }
 
-        const images = req.files ? req.files.map(f => `/uploads/${f.filename}`) : [];
-        if (images.length > 0) {
-            metadata = metadata || {};
-            metadata.images = images;
-        }
+      const images = req.files
+        ? req.files.map(f => `/uploads/${f.filename}`)
+        : [];
 
-        const post = await repo.communityPosts.create({
-                author_id: req.user.sub,
-                title,
-                content,
-                post_type,
-                visibility,
-                media_url,
-                metadata,
-            });
-        
+      if (images.length > 0) {
+        metadata = metadata || {};
+        metadata.images = images;
+      }
 
-        return res.status(201).json(post);
-    }catch(err){
-        console.log(err);
-        
-        next(err)
+      const post = await repo.communityPosts.create({
+        author_id: req.user.sub,
+        title,
+        content,
+        post_type,
+        visibility,
+        media_url,
+        metadata,
+      });
+
+      return res.status(201).json(post);
+
+    } catch (err) {
+      console.log(err);
+      next(err);
     }
-})
+  }
+);
 
 //Community Feed
 router.get("/feed", authRequired, async(req, res, next) => {

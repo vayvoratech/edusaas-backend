@@ -2307,13 +2307,12 @@ const skillsInsights = Array.from(
 
     skillsInsights,
   };
-},
+  },
   studentDashboard: async (user_id) => {
     const [
       user,
       initialAssessment,
       gapReport,
-      codingAssessment,
       enrollments,
       tasks,
       achievements,
@@ -2368,15 +2367,6 @@ const skillsInsights = Array.from(
     prisma.gapReport.findFirst({
       where: {
         user_id,
-      },
-    }),
-
-    prisma.user_coding_sessions.findFirst({
-      where: {
-        user_id,
-      },
-      orderBy: {
-        started_at: "desc",
       },
     }),
 
@@ -2703,4 +2693,5 @@ const skillsInsights = Array.from(
     learningAnalytics,
     };
   },
+
 };
