@@ -258,11 +258,122 @@ const mapAnn = (a) => a && { ...a, scheduled_at: iso(a.scheduled_at), created_at
 module.exports = {
   prisma,
 
+  connections: {
+    sendRequest: async (requesterId, receiverId) => {
+      return await prisma.connection.upsert({
+        where: { requesterId_receiverId: { requesterId, receiverId } },
+        update: { status: "pending" },
+        create: { requesterId, receiverId, status: "pending" }
+      });
+    },
+    acceptRequest: async (connectionId, receiverId) => {
+      return await prisma.connection.updateMany({
+        where: { id: connectionId, receiverId, status: "pending" },
+        data: { status: "accepted" }
+      });
+    },
+    rejectRequest: async (connectionId, receiverId) => {
+      return await prisma.connection.updateMany({
+        where: { id: connectionId, receiverId, status: "pending" },
+        data: { status: "rejected" }
+      });
+    },
+    getConnections: async (userId) => {
+      // Get all accepted connections where user is either requester or receiver
+      return await prisma.connection.findMany({
+        where: {
+          status: "accepted",
+          OR: [{ requesterId: userId }, { receiverId: userId }]
+        },
+        include: {
+          requester: { select: { id: true, name: true, username: true, email: true, role: true } },
+          receiver: { select: { id: true, name: true, username: true, email: true, role: true } }
+        }
+      });
+    },
+    getPendingRequests: async (userId) => {
+      return await prisma.connection.findMany({
+        where: { receiverId: userId, status: "pending" },
+        include: {
+          requester: { select: { id: true, name: true, username: true, email: true, role: true } }
+        }
+      });
+    },
+    removeConnection: async (connectionId, userId) => {
+      // Find the connection first
+      const conn = await prisma.connection.findFirst({
+        where: {
+          id: connectionId,
+          OR: [{ requesterId: userId }, { receiverId: userId }]
+        }
+      });
+      
+      if (!conn) return { count: 0 };
+      
+      // Delete the notification if it was a pending request
+      if (conn.status === 'pending') {
+        // The requester is cancelling, or receiver rejecting
+        // We delete the notification for the receiver
+        const requester = await prisma.user.findUnique({ where: { id: conn.requesterId }});
+        if (requester) {
+          await prisma.notification.deleteMany({
+            where: {
+              user_id: conn.receiverId,
+              type: "connection_request",
+              message: { startsWith: requester.name || 'Someone' }
+            }
+          });
+        }
+      }
+
+      return await prisma.connection.deleteMany({
+        where: { id: connectionId }
+      });
+    }
+  },
+
   users: {
+    searchByUsername: async (username, excludeId = null) => {
+      const whereClause = { username: { contains: username, mode: "insensitive" } };
+      if (excludeId) whereClause.id = { not: excludeId };
+      
+      const users = await prisma.user.findMany({
+        where: whereClause,
+        select: { id: true, name: true, username: true, email: true, role: true },
+        take: 10
+      });
+
+      if (!excludeId || users.length === 0) return users;
+
+      // Fetch connections between excludeId and these users
+      const userIds = users.map(u => u.id);
+      const connections = await prisma.connection.findMany({
+        where: {
+          OR: [
+            { requesterId: excludeId, receiverId: { in: userIds } },
+            { requesterId: { in: userIds }, receiverId: excludeId }
+          ]
+        }
+      });
+
+      return users.map(u => {
+        const conn = connections.find(c => c.requesterId === u.id || c.receiverId === u.id);
+        if (conn) {
+          let status = conn.status;
+          if (status === 'pending') {
+            status = conn.requesterId === excludeId ? 'pending_sent' : 'pending_received';
+          }
+          return { ...u, connection_status: status, connection_id: conn.id };
+        }
+        return u;
+      });
+    },
     findById: async (id) =>
       mapUser(await prisma.user.findUnique({ where: { id }, include: userInclude })),
     findByEmail: async (email) =>
       mapUser(await prisma.user.findUnique({ where: { email }, include: userInclude })),
+    deleteByClerkId: async (clerk_id) => 
+      await prisma.user.delete({ where: { clerk_id } }),
     list: async (filters = {}) => {
       const where = {};
       if (filters.role) where.role = { name: filters.role };
@@ -531,6 +642,12 @@ module.exports = {
       if (filters.educator_id) where.educator_id = filters.educator_id;
       if (filters.category) where.category = filters.category;
       if (filters.difficulty) where.difficulty = filters.difficulty;
+      if (filters.search) {
+        where.OR = [
+          { title: { contains: filters.search, mode: 'insensitive' } },
+          { description: { contains: filters.search, mode: 'insensitive' } }
+        ];
+      }
       return (await prisma.course.findMany({ where, orderBy: { created_at: "desc" } })).map(mapCourse);
     },
     findById: async (id) => mapCourse(await prisma.course.findUnique({ where: { id } })),
@@ -1461,6 +1578,22 @@ module.exports = {
           data,
         }),
       ),
+
+    getComparisonSubmissions: async (question_id, exclude_user_id) =>
+      prisma.coding_submissions.findMany({
+        where: {
+          question_id,
+          user_id: {
+            not: exclude_user_id,
+          },
+          status: "PASSED", // Only compare against successful submissions (optional but good practice)
+        },
+        select: {
+          submission_id: true,
+          source_code: true,
+        },
+        take: 50, // Limit comparisons for performance
+      }),
   },
 
   submissionTestResults: {

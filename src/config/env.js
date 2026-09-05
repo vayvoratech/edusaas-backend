@@ -21,18 +21,22 @@ module.exports = {
   appEnv: APP_ENV || "default",
   port: parseInt(process.env.PORT, 10) || 5000,
 
- jwtSecret: process.env.JWT_SECRET || "dev-secret-change-me",
+  jwtSecret: process.env.JWT_SECRET || "dev-secret-change-me",
   jwtExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "1h",
 
   refreshJwtSecret:
-  process.env.JWT_REFRESH_SECRET || "dev-refresh-secret-change-me",
+    process.env.JWT_REFRESH_SECRET || "dev-refresh-secret-change-me",
 
   refreshJwtExpiresIn:
-  process.env.JWT_REFRESH_EXPIRES_IN || "7d",
+    process.env.JWT_REFRESH_EXPIRES_IN || "7d",
 
   databaseUrl: process.env.DATABASE_URL || "",
 
   smtpUser: process.env.SMTP_USER || "",
   smtpPass: process.env.SMTP_PASS || "",
   smtpFrom: process.env.SMTP_FROM || "",
+
+  aimlServiceUrl: process.env.AIML_SERVICE_URL || "http://127.0.0.1:8000",
+  plagiarismBaseUrl: process.env.PLAGIARISM_BASE_URL || "http://127.0.0.1:8002",
+  flaskQuizUrl: process.env.FLASK_QUIZ_URL || "http://127.0.0.1:5000",
 };

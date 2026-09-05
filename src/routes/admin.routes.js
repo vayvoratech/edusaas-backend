@@ -1,6 +1,7 @@
 const express = require("express");
 const repo = require("../data");
 const { authRequired, permissionRequired } = require("../middleware/auth");
+const aimlClient = require("../services/aimlClient");
 
 const router = express.Router();
 
@@ -186,6 +187,50 @@ router.get(
       const insights = await repo.insights();
 
       return res.json(insights);
+
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * @openapi
+ * /api/admin/analytics/dropout-risk/{studentId}:
+ *   get:
+ *     tags: [Admin]
+ *     summary: AI prediction of dropout risk for a student
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+  "/analytics/dropout-risk/:studentId",
+  authRequired,
+  permissionRequired("admin:insights"), // or appropriate permission
+  async (req, res, next) => {
+    try {
+      const studentId = req.params.studentId;
+      // Ideally, fetch real stats from DB to pass to ML model
+      // For now, construct a base mock schema to send to the ML API based on the model's expected features
+      const studentData = {
+        sessions_last_30_days: 12,
+        avg_session_minutes: 45.5,
+        videos_watched: 10,
+        assignments_attempted: 5,
+        discussion_interactions: 3,
+        logins_last_30_days: 15,
+        days_since_last_login: 2,
+        completion_percentage: 45.0,
+        quiz_average: 78.5,
+        assignment_completion_rate: 80.0
+      };
+
+      try {
+        const aiData = await aimlClient.predictDropout(studentData);
+        return res.json(aiData);
+      } catch (aiErr) {
+        return res.status(502).json({ error: "AI Dropout Prediction failed", details: aiErr.message });
+      }
 
     } catch (err) {
       next(err);

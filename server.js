@@ -42,6 +42,9 @@ const app = express();
 
 // Enable Cross-Origin Resource Sharing (CORS)
 app.use(cors());
+// Mount webhooks route BEFORE express.json() so it can use express.raw()
+app.use("/api/webhooks", require("./src/routes/webhooks.routes"));
+
 // Parse incoming JSON requests
 app.use(express.json());
 // Serve uploaded resumes
@@ -67,6 +70,7 @@ app.get("/api-docs.json", (req, res) => res.json(swaggerSpec));
 // Mount the various API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
+app.use("/api/connections", require("./src/routes/connections.routes"));
 app.use("/api/assessments", assessmentsRoutes);
 app.use("/api/gap-report", gapReportRoutes);
 app.use("/api/courses", coursesRoutes);

@@ -11,6 +11,8 @@ datasource db {
 model User {
   id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name                    String                    @db.VarChar(255)
+  username                String?                   @unique @db.VarChar(255)
+  clerk_id                String?                   @unique @db.VarChar(255)
   email                   String                    @unique @db.VarChar(255)
   role_id                 String                    @db.Uuid
   password_hash           String
@@ -50,10 +52,28 @@ model User {
   coding_submissions      coding_submissions[]
   role                    Role                      @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_users_role")
   domainRole              DomainRole?               @relation(fields: [domain_role_id], references: [domain_role_id])
+  sentConnections         Connection[]              @relation("SentConnections")
+  receivedConnections     Connection[]              @relation("ReceivedConnections")
 
   @@index([role_id], map: "idx_users_role")
   @@index([domain_role_id])
   @@map("users")
+  @@schema("education")
+}
+
+model Connection {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requesterId String   @db.Uuid
+  receiverId  String   @db.Uuid
+  status      String   @default("pending") @db.VarChar(20) // 'pending', 'accepted', 'rejected'
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  requester   User     @relation("SentConnections", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver    User     @relation("ReceivedConnections", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, receiverId])
+  @@map("connections")
   @@schema("education")
 }
 
@@ -151,7 +171,7 @@ model CourseRating {
   created_at DateTime @default(now()) @db.Timestamp(6)
   updated_at DateTime @default(now()) @db.Timestamp(6)
   course     Course   @relation(fields: [course_id], references: [id])
-  user       User     @relation(fields: [user_id], references: [id])
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@map("course_ratings")
   @@schema("education")
@@ -208,7 +228,7 @@ model CourseProgress {
   created_at        DateTime @default(now()) @db.Timestamp(6)
 
   course Course @relation(fields: [course_id], references: [id])
-  user   User   @relation(fields: [user_id], references: [id])
+  user   User   @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@map("course_progress")
   @@schema("education")
@@ -254,7 +274,7 @@ model final_submissions {
   code               String
   submitted_at       DateTime?            @default(now()) @db.Timestamptz(6)
   domain_roles       DomainRole           @relation(fields: [domain_role_id], references: [domain_role_id], onDelete: NoAction, onUpdate: NoAction, map: "fk_final_submission_domain_roles")
-  users              User                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_final_submission_user")
+  user               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_final_submission_user")
   plagiarism_checks  plagiarism_checks[]
   plagiarism_matches plagiarism_matches[]
 

@@ -1,6 +1,7 @@
 const express = require("express");
 const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
+const aimlClient = require("../services/aimlClient");
 
 const router = express.Router();
 
@@ -25,7 +26,7 @@ router.get("/", authRequired, async (req, res, next) => {
     const recommendations =
       await repo.recommendations.listByUser(req.user.sub);
 
-    const result = await Promise.all(
+    const manualResult = await Promise.all(
       recommendations.map(async (recommendation) => {
         const course = await repo.courses.findById(
           recommendation.course_id
@@ -34,11 +35,29 @@ router.get("/", authRequired, async (req, res, next) => {
         return {
           ...recommendation,
           course,
+          source: 'manual'
         };
       })
     );
 
-    return res.json(result);
+    let aiResult = [];
+    try {
+      // Find a base course name. As a fallback, we use a generic keyword.
+      // In a full implementation, you might fetch the student's most recent course title.
+      let baseCourseName = "Machine Learning";
+      const aiData = await aimlClient.getRecommendations(req.user.sub, baseCourseName);
+      if (aiData && aiData.success && aiData.data) {
+        aiResult = [{
+          type: 'ai_suggestions',
+          suggestions: aiData.data,
+          source: 'ai'
+        }];
+      }
+    } catch (aiErr) {
+      console.warn("[AIML] Recommendation engine fallback triggered:", aiErr.message);
+    }
+
+    return res.json([...manualResult, ...aiResult]);
 
   } catch (err) {
     next(err);

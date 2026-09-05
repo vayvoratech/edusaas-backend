@@ -16,6 +16,7 @@ const upload = multer({ storage: storage });
 
 const repo = require("../data");
 const { authRequired, } = require("../middleware/auth");
+const aimlClient = require("../services/aimlClient");
 
 //Create Post 
 router.post(
@@ -67,6 +68,40 @@ router.post(
       if (images.length > 0) {
         metadata = metadata || {};
         metadata.images = images;
+      }
+
+      try {
+        const textToAnalyze = `${title} ${content}`.substring(0, 5000); // Max 5000 chars
+
+        const [sentimentResult, toxicityResult] = await Promise.allSettled([
+          aimlClient.analyzeSentiment({
+            student_id: req.user.sub, // Will be hashed inside aimlClient.js
+            course_id: 0,
+            discussion_id: 0,
+            post_text: textToAnalyze,
+          }),
+          aimlClient.analyzeToxicity({
+            student_id: req.user.sub,
+            discussion_id: 0,
+            post_text: textToAnalyze,
+          })
+        ]);
+        
+        metadata = metadata || {};
+
+        if (sentimentResult.status === 'fulfilled' && sentimentResult.value?.success) {
+          metadata.sentiment = sentimentResult.value.data;
+        } else if (sentimentResult.status === 'rejected') {
+          console.warn("[AIML] Sentiment Analysis skipped:", sentimentResult.reason?.message);
+        }
+
+        if (toxicityResult.status === 'fulfilled') {
+          metadata.toxicity = toxicityResult.value;
+        } else if (toxicityResult.status === 'rejected') {
+          console.warn("[AIML] Toxicity Analysis skipped:", toxicityResult.reason?.message);
+        }
+      } catch (err) {
+        console.warn("[AIML] Analysis skipped:", err.message);
       }
 
       const post = await repo.communityPosts.create({

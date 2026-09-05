@@ -2,6 +2,7 @@
 const repo = require("../data/prismaRepo");
 const { runCode, runCodeBatch } = require("./dockerService");
 const skillGapService = require("./skillGapService")
+const aimlClient = require("./aimlClient");
 require('dotenv').config()
 const CODING_QUESTION_COUNT = 3;
 const CODING_TEST_CONCURRENCY = Math.max(
@@ -1049,6 +1050,40 @@ async function submitCode({
       total_test_cases: totalTestCases,
       execution_time_ms: executionTimeMs,
     });
+
+  // ---------------------------------------------------------
+  // 11.5 Trigger Code Plagiarism Check
+  // ---------------------------------------------------------
+  try {
+    const rawComparisons = await repo.codingSubmissions.getComparisonSubmissions(numericQuestionId, userId);
+    const comparison_submissions = (rawComparisons || []).map(sub => ({
+      submission_id: sub.submission_id,
+      code: sub.source_code
+    }));
+
+    const plagiarismResp = await aimlClient.checkCodePlagiarism({
+      language: canonicalLanguage,
+      submission: {
+        submission_id: submission.submission_id,
+        code: code
+      },
+      comparison_submissions: comparison_submissions
+    });
+    
+    if (plagiarismResp && plagiarismResp.data && plagiarismResp.data.matches) {
+      const highRiskMatches = plagiarismResp.data.matches.filter(m => m.risk_level === "HIGH" || m.risk_level === "VERY_HIGH");
+      
+      if (highRiskMatches.length > 0) {
+        console.warn(`[AIML Plagiarism] Flagged coding submission ${submission.submission_id} for plagiarism. Matches:`, highRiskMatches.length);
+        // You could update DB here to store the matches or flag the submission
+        // e.g., await repo.plagiarismMatches.saveMatches(plagiarismResp.data.matches);
+      } else {
+        console.log(`[AIML Plagiarism] Submission ${submission.submission_id} passed plagiarism check. (Compared with ${plagiarismResp.data.comparison_count} submissions)`);
+      }
+    }
+  } catch (err) {
+    console.warn("[AIML Plagiarism Check] Skipped or failed:", err.message);
+  }
 
   // ---------------------------------------------------------
   // 12. Persist individual test-case results
