@@ -550,6 +550,30 @@ const hasRequiredSkills = requiredSkills.length > 0;
 const applications =
   await repo.applications.listByJob(req.params.id);
 
+
+  const getApplicationData = async (studentId) => {
+  const application = applications.find(
+    (app) => String(app.student_id) === String(studentId)
+  );
+
+  if (!application) {
+    return {
+      application_id: null,
+      application_status: null,
+      interview: null,
+    };
+  }
+
+  const interview =
+    await repo.interviews.findByApplication(application.id);
+
+  return {
+    application_id: application.id,
+    application_status: application.status,
+    interview: interview || null,
+  };
+};
+
 const appliedStudentIds = new Set(
   applications.map((application) =>
     String(application.student_id)
@@ -596,7 +620,7 @@ console.log(
   }))
 );
   console.log("NEW CODE IS RUNNING");
-for (const student of unappliedDomainStudents) {
+for (const student of domainStudents) {
   console.log("PROCESSING:", student.email);
 
   const matchedSkillNames = [];
@@ -611,6 +635,8 @@ for (const student of unappliedDomainStudents) {
       "NO REQUIRED SKILLS - INCLUDING STUDENT:",
       student.email
     );
+    const applicationData =
+  await getApplicationData(student.id);
 
     results.push({
       id: student.id,
@@ -748,24 +774,31 @@ for (const student of unappliedDomainStudents) {
     fitCategory = "Possible Fit";
   }
 
-  results.push({
-    id: student.id,
-    name: student.name,
-    email: student.email,
-    domain_role_id: student.domain_role_id,
+  const applicationData =
+  await getApplicationData(student.id);
 
-    domain_role:
-      student.domainRole?.domain_name || job.title,
+results.push({
+  id: student.id,
+  name: student.name,
+  email: student.email,
+  domain_role_id: student.domain_role_id,
 
-    skill_match: skillMatch,
-    fit_category: fitCategory,
+  domain_role:
+    student.domainRole?.domain_name || job.title,
 
-    matched_skills: matchedSkillNames,
-    missing_skills: missingSkillNames,
-    partial_skills: partialSkillNames,
+  skill_match: skillMatch,
+  fit_category: fitCategory,
 
-    eligible: true,
-  });
+  matched_skills: matchedSkillNames,
+  missing_skills: missingSkillNames,
+  partial_skills: partialSkillNames,
+
+  application_id: applicationData.application_id,
+  application_status: applicationData.application_status,
+  interview: applicationData.interview,
+
+  eligible: true,
+});
 
   console.log("MATCH RESULT:", {
     student: student.name,

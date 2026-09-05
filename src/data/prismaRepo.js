@@ -572,16 +572,76 @@ module.exports = {
   },
 
   applications: {
-    findOne: async (job_id, student_id) =>
-      mapApp(await prisma.application.findUnique({
-        where: { job_id_student_id: { job_id, student_id } },
-      })),
-    create: async (data) => mapApp(await prisma.application.create({ data })),
-    listByJob: async (job_id) =>
-      (await prisma.application.findMany({ where: { job_id } })).map(mapApp),
-    listByStudent: async (student_id) =>
-      (await prisma.application.findMany({ where: { student_id } })).map(mapApp),
-  },
+  findById: async (id) =>
+    mapApp(await prisma.application.findUnique({
+      where: { id },
+    })),
+
+  findOne: async (job_id, student_id) =>
+    mapApp(await prisma.application.findUnique({
+      where: { job_id_student_id: { job_id, student_id } },
+    })),
+
+  create: async (data) =>
+    mapApp(await prisma.application.create({ data })),
+
+  update: async (id, data) =>
+    mapApp(
+      await prisma.application.update({
+        where: { id },
+        data,
+      })
+    ),
+
+  listByJob: async (job_id) =>
+    (await prisma.application.findMany({ where: { job_id } })).map(mapApp),
+
+  listByStudent: async (student_id) =>
+    (await prisma.application.findMany({ where: { student_id } })).map(mapApp),
+},
+
+interviews: {
+  findById: async (id) =>
+    safeQuery(
+      prisma.interview.findUnique({
+        where: { id },
+      })
+    ),
+
+  findByApplication: async (application_id) =>
+    safeQuery(
+      prisma.interview.findFirst({
+        where: { application_id },
+        orderBy: { scheduled_at: "desc" },
+      })
+    ),
+
+  create: async (data) =>
+    safeQuery(
+      prisma.interview.create({
+        data,
+      })
+    ),
+
+  update: async (id, data) =>
+    safeQuery(
+      prisma.interview.update({
+        where: { id },
+        data,
+      })
+    ),
+
+  remove: async (id) =>
+    !!(
+      await safeQuery(
+        prisma.interview.delete({
+          where: { id },
+        })
+      )
+    ),
+},
+
+
 
   notifications: {
   listByUser: async (user_id) =>
