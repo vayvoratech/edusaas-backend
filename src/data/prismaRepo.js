@@ -258,6 +258,10 @@ const mapAnn = (a) => a && { ...a, scheduled_at: iso(a.scheduled_at), created_at
 module.exports = {
   prisma,
 
+  domainRoles: {
+    list: async () => prisma.domainRole.findMany({ orderBy: { domain_name: "asc" } }),
+  },
+
   connections: {
     sendRequest: async (requesterId, receiverId) => {
       return await prisma.connection.upsert({
@@ -701,7 +705,7 @@ module.exports = {
   },
 
   notifications: {
-  listByUser: async (user_id) =>
+  listByUser: async (user_id, limit = 50) =>
     (
       await prisma.notification.findMany({
         where: {
@@ -714,6 +718,7 @@ module.exports = {
         orderBy: {
           created_at: "desc",
         },
+        take: limit || 50,
       })
     ).map(mapNotif),
 
@@ -737,6 +742,13 @@ module.exports = {
         data: { read_status: true },
       })
     );
+  },
+
+  markAllRead: async (user_id) => {
+    return prisma.notification.updateMany({
+      where: { user_id, read_status: false },
+      data: { read_status: true },
+    });
   },
 },
 
@@ -1932,6 +1944,24 @@ module.exports = {
       );
     },
 
+    async toggleBookmark(user_id, post_id) {
+      const existing = await prisma.community_bookmarks.findFirst({
+        where: { user_id, post_id },
+      });
+
+      if (existing) {
+        await prisma.community_bookmarks.delete({
+          where: { id: existing.id },
+        });
+        return { bookmarked: false };
+      } else {
+        await prisma.community_bookmarks.create({
+          data: { user_id, post_id },
+        });
+        return { bookmarked: true };
+      }
+    },
+
     async getFeed({
       page = 1,
       limit = 10,
@@ -1947,20 +1977,6 @@ module.exports = {
         status: "Published",
       };
 
-      if (user_role && user_role.toLowerCase() !== "admin") {
-        const { Prisma } = require("@prisma/client");
-        const roleCased = user_role.charAt(0).toUpperCase() + user_role.slice(1).toLowerCase();
-        
-        where.OR = [
-          { metadata: { equals: Prisma.AnyNull } },
-          { metadata: { path: ['allowedRoles'], array_contains: roleCased } },
-        ];
-        
-        if (current_user_id) {
-          where.OR.push({ author_id: current_user_id });
-        }
-      }
-
       if (post_type) {
         where.post_type = post_type;
       }
@@ -1973,21 +1989,55 @@ module.exports = {
         where.author_id = author_id;
       }
 
-      return (
-        await prisma.community_posts.findMany({
-          where,
+      // Fetch posts (fetching buffer to account for role-filtered posts)
+      const isViewerAdmin = user_role && user_role.toLowerCase() === "admin";
+      const viewerRole = user_role ? user_role.toLowerCase() : null;
+      const fetchTake = (!isViewerAdmin && viewerRole) ? Math.max(limit * 3, 50) : limit;
 
-          include: communityPostInclude,
+      const posts = await prisma.community_posts.findMany({
+        where,
+        include: communityPostInclude,
+        orderBy: {
+          created_at: "desc",
+        },
+        skip: (page - 1) * limit,
+        take: fetchTake,
+      });
 
-          orderBy: {
-            created_at: "desc",
+      // Role visibility filter:
+      // Admins can see all posts.
+      // Authors can always see their own posts.
+      // For others, if metadata.allowedRoles is specified, viewer's role must be included.
+      const visiblePosts = posts.filter(p => {
+        if (isViewerAdmin) return true;
+        if (current_user_id && p.author_id === current_user_id) return true;
+
+        const meta = p.metadata;
+        if (meta && Array.isArray(meta.allowedRoles) && meta.allowedRoles.length > 0) {
+          if (!viewerRole) return false;
+          const allowed = meta.allowedRoles.map(r => String(r).toLowerCase());
+          return allowed.includes(viewerRole);
+        }
+        return true;
+      }).slice(0, limit);
+
+      let bookmarkedPostIds = new Set();
+      if (current_user_id && visiblePosts.length > 0) {
+        const bookmarks = await prisma.community_bookmarks.findMany({
+          where: {
+            user_id: current_user_id,
+            post_id: { in: visiblePosts.map((p) => p.id) },
           },
+          select: { post_id: true },
+        });
+        bookmarkedPostIds = new Set(bookmarks.map((b) => b.post_id));
+      }
 
-          skip: (page - 1) * limit,
-
-          take: limit,
-        })
-      ).map(mapCommunityPost);
+      return visiblePosts.map((p) => {
+        const mapped = mapCommunityPost(p);
+        mapped.bookmarked = bookmarkedPostIds.has(p.id);
+        return mapped;
+      });
     },
 
     async findByAuthor(author_id) {

@@ -44,9 +44,7 @@ router.post(
       ];
 
       if (!VALID_VISIBILITIES.includes(visibility)) {
-        return res.status(400).json({
-          error: "Invalid visibility value",
-        });
+        visibility = "Public";
       }
 
       if (typeof metadata === 'string' && metadata !== 'null') {
@@ -114,6 +112,90 @@ router.post(
         metadata,
       });
 
+      // Background task for notifications
+      (async () => {
+        try {
+          const authorName = req.user.name || 'Your connection';
+          const authorId = req.user.sub;
+
+          // Check role restrictions from metadata
+          const hasRoleRestriction = Array.isArray(metadata?.allowedRoles) && metadata.allowedRoles.length > 0;
+          const allowedRoles = hasRoleRestriction 
+            ? metadata.allowedRoles.map(r => String(r).toLowerCase())
+            : null;
+
+          const isRoleAllowed = (roleName) => {
+            if (!roleName) return false;
+            const r = roleName.toLowerCase();
+            // Admins can always watch any post and receive connection notifications
+            if (r === 'admin') return true;
+            // If no restriction (Public), all roles are allowed
+            if (!allowedRoles) return true;
+            return allowedRoles.includes(r);
+          };
+
+          const recipientIds = new Set();
+
+          // 1. Get all connections of author (only if their role is allowed or admin)
+          const connections = await repo.connections.getConnections(authorId);
+          for (const conn of connections) {
+            const targetUser = conn.receiverId === authorId ? conn.requester : conn.receiver;
+            if (!targetUser || targetUser.id === authorId) continue;
+
+            const targetRole = targetUser.role?.name || (typeof targetUser.role === 'string' ? targetUser.role : null);
+            if (isRoleAllowed(targetRole)) {
+              recipientIds.add(targetUser.id);
+            }
+          }
+
+          // 2. For Job and Course: broadcast to students whose domainRole matches notifyDomainRoles
+          // CRITICAL: Only broadcast if 'student' role is allowed in visibility!
+          if ((post_type === 'Job' || post_type === 'Course') && isRoleAllowed('student')) {
+            const notifyRoles = metadata?.notifyDomainRoles || [];
+            if (notifyRoles.length > 0) {
+              const domainStudents = await repo.prisma.user.findMany({
+                where: {
+                  role: { name: { equals: 'student', mode: 'insensitive' } },
+                  domainRole: {
+                    domain_name: { in: notifyRoles }
+                  }
+                },
+                select: { id: true }
+              });
+
+              for (const u of domainStudents) {
+                if (u.id !== authorId) {
+                  recipientIds.add(u.id);
+                }
+              }
+            }
+          }
+
+          // 3. Dispatch notifications
+          for (const targetUserId of recipientIds) {
+            let notifType = 'new_post';
+            let notifMessage = `${authorName} created a new post: "${title}"`;
+
+            if (post_type === 'Job') {
+              notifType = 'new_job';
+              notifMessage = `New Job Opportunity matching your domain: "${title}"`;
+            } else if (post_type === 'Course') {
+              notifType = 'new_course';
+              notifMessage = `New Course recommendation: "${title}"`;
+            }
+
+            await repo.notifications.create({
+              user_id: targetUserId,
+              type: notifType,
+              message: notifMessage,
+              reference_id: post.id,
+            });
+          }
+        } catch (notifyErr) {
+          console.error("Failed to send post notifications", notifyErr);
+        }
+      })();
+
       return res.status(201).json(post);
 
     } catch (err) {
@@ -136,6 +218,16 @@ router.get("/feed", authRequired, async(req, res, next) => {
         next(err)
     }
 })
+
+//Toggle Bookmark
+router.post("/posts/:id/bookmark", authRequired, async (req, res, next) => {
+    try {
+        const result = await repo.communityPosts.toggleBookmark(req.user.sub, req.params.id);
+        return res.json(result);
+    } catch (err) {
+        next(err);
+    }
+});
 
 //Get single post
 router.get("/posts/:id", authRequired, async(req, res, next) => {

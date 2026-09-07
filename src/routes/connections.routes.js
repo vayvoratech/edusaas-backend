@@ -23,10 +23,13 @@ router.post('/request/:receiverId', authRequired, async (req, res, next) => {
     const connection = await repo.connections.sendRequest(requesterId, receiverId);
     
     // Trigger a notification for the receiver
+    const requester = await repo.users.findById(requesterId);
+    const requesterName = requester?.name || 'Someone';
+
     await repo.notifications.create({
       user_id: receiverId,
       type: "connection_request",
-      message: `${req.user.name || 'Someone'} sent you a connection request.`,
+      message: `${requesterName} wants to connect with you.`,
     });
     
     return res.status(201).json({ success: true, connection });
@@ -51,11 +54,23 @@ router.post('/accept/:connectionId', authRequired, async (req, res, next) => {
     const receiverId = req.user.sub;
     const { connectionId } = req.params;
 
+    const connection = await repo.prisma.connection.findUnique({ where: { id: connectionId } });
+    
     const result = await repo.connections.acceptRequest(connectionId, receiverId);
     
-    if (result.count === 0) {
+    if (result.count === 0 || !connection) {
       return res.status(404).json({ error: "Pending connection request not found." });
     }
+
+    // Fetch accepter's name from DB to guarantee the real name is used
+    const accepter = await repo.users.findById(receiverId);
+    const accepterName = accepter?.name?.trim() || accepter?.username || req.user.name || 'Someone';
+
+    await repo.notifications.create({
+      user_id: connection.requesterId,
+      type: "connection_accepted",
+      message: `${accepterName} accepted your connection request.`,
+    });
     
     return res.json({ success: true, message: "Connection accepted." });
   } catch (err) {

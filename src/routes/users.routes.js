@@ -9,7 +9,7 @@ const {
 
 const router = express.Router();
 
-const { clerkMiddleware, getAuth, clerkClient } = require('@clerk/express');
+const { clerkClient, verifyToken } = require('@clerk/express');
 const { generateAccessToken, generateRefreshToken } = require("../config/jwt");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
@@ -23,19 +23,35 @@ const jwt = require("jsonwebtoken");
  *     summary: Synchronize Clerk user to PostgreSQL DB
  *     security: [{ bearerAuth: [] }]
  */
-router.post("/sync", clerkMiddleware({
-  secretKey: process.env.CLERK_SECRET_KEY,
-  publishableKey: process.env.CLERK_PUBLISHABLE_KEY
-}), async (req, res, next) => {
+router.post("/sync", async (req, res, next) => {
   console.log("[SYNC ROUTE HIT] Starting user sync process...");
   try {
-    const auth = getAuth(req);
-    const clerkId = auth.userId;
-    
+    // Extract Bearer token from Authorization header
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Unauthorized: No token provided." });
+    }
+
+    // Verify the Clerk JWT (session token) sent from the React frontend
+    let clerkPayload;
+    try {
+      clerkPayload = await verifyToken(token, {
+        secretKey: process.env.CLERK_SECRET_KEY,
+        clockSkewInMs: 60000, // 60s tolerance for minor clock drift
+      });
+    } catch (verifyErr) {
+      console.error("[SYNC] Token verification failed:", verifyErr.message);
+      return res.status(401).json({ error: "Unauthorized: Invalid Clerk token.", detail: verifyErr.message });
+    }
+
+    const clerkId = clerkPayload.sub;
+
     if (!clerkId) {
       return res.status(401).json({ error: "Unauthorized: Missing valid Clerk session token." });
     }
-    
+
     console.log("[SYNC] Authenticated Clerk ID:", clerkId);
     
     const clerkUser = await clerkClient.users.getUser(clerkId);
