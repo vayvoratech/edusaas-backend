@@ -100,6 +100,7 @@ model Profile {
   institution                  String?
   company                      String?
   preferences                  Json?
+  resume                       Json?
   initial_assessment_completed Boolean @default(false)
   user                         User    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_profile_user")
 
@@ -293,22 +294,30 @@ model plagiarism_matches {
 }
 
 model Job {
-  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  employer_id              String   @db.Uuid
-  title                    String   @db.VarChar(255)
-  description              String?
-  requirements             String?
-  required_skills          String[]
-  status                   String   @default("open") @db.VarChar(50)
-  created_at               DateTime @default(now()) @db.Timestamp(6)
-  domain_role_id           String?  @db.Uuid
-  minimum_experience_years Float?   @default(0)
-
-  applications  Application[]
-  jobSkills     JobSkill[]
-  employer      User           @relation("EmployerJobs", fields: [employer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_job_employer")
-  domainRole    DomainRole?    @relation(fields: [domain_role_id], references: [domain_role_id])
-  notifications Notification[]
+  id                   String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employer_id          String         @db.Uuid
+  title                String         @db.VarChar(255)
+  description          String?
+  requirements         String?
+  required_skills      String[]
+  status               String         @default("open") @db.VarChar(50)
+  created_at           DateTime       @default(now()) @db.Timestamp(6)
+  preferred_skills     String[]       @default([])
+  qualification        String?        @db.VarChar(100)
+  eligible_branches    String[]       @default([])
+  employment_type      String?        @db.VarChar(50)
+  work_mode            String?        @db.VarChar(50)
+  location             String?        @db.VarChar(255)
+  salary               String?        @db.VarChar(255)
+  application_deadline DateTime?      @db.Timestamp(6)
+  responsibilities     String?
+  require_video        Boolean        @default(false)
+  video_max_duration   Int?
+  video_prompt         String?
+  applications         Application[]
+  employer             User           @relation("EmployerJobs", fields: [employer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_job_employer")
+  notifications        Notification[]
+  jobSkills            JobSkill[]
 
   @@index([employer_id], map: "idx_jobs_employer")
   @@map("jobs")
@@ -600,7 +609,6 @@ model DomainRole {
 
   requiredSkills    DomainRequiredSkill[]
   final_submissions final_submissions[]
-  jobs              Job[]
   quizSessions      QuizSession[]
   studentProfiles   StudentProfile[]
   users             User[]
@@ -690,7 +698,6 @@ model QuizSession {
   current_question_id  Int?
   remaining_seconds    Int?
   paused_at            DateTime?             @db.Timestamp(6)
-  assessment_type      assessment_type       @default(INITIAL)
   proctoring_events    proctoring_events[]
   domainRole           DomainRole            @relation(fields: [domain_role_id], references: [domain_role_id], onUpdate: NoAction)
   user                 User                  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -704,7 +711,6 @@ model QuizSession {
   @@index([domain_role_id], map: "idx_quiz_sessions_domain_role")
   @@index([status], map: "idx_quiz_sessions_status")
   @@index([user_id], map: "idx_quiz_sessions_user")
-  @@index([user_id, assessment_type, status], map: "idx_quiz_sessions_user_assessment_status")
   @@map("quiz_sessions")
   @@schema("education")
 }

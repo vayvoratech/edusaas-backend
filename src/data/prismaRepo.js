@@ -595,6 +595,22 @@ module.exports = {
 
   listByJob: async (job_id) =>
     (await prisma.application.findMany({ where: { job_id } })).map(mapApp),
+  listByJobWithStudent: async (job_id) =>
+  (
+    await prisma.application.findMany({
+      where: { job_id },
+      include: {
+        student: true,
+      },
+      orderBy: {
+        applied_at: "desc",
+      },
+    })
+  ).map((application) => ({
+    ...mapApp(application),
+    student_name: application.student?.name || null,
+    student_email: application.student?.email || null,
+  })),
 
   listByStudent: async (student_id) =>
     (await prisma.application.findMany({ where: { student_id } })).map(mapApp),

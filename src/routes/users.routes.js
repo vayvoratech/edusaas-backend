@@ -39,14 +39,37 @@ function sanitizeUser(user) {
 router.get("/:id", authRequired, async (req, res, next) => {
   try {
     // Only the owner or admin can view a profile
-    if (
-      req.user.sub !== req.params.id &&
-      req.user.role !== "admin"
-    ) {
-      return res.status(403).json({
-        error: "Cannot view another user's profile.",
-      });
-    }
+    const isOwner = String(req.user.sub) === String(req.params.id);
+const isAdmin =
+  req.user.role === "admin" ||
+  req.user.role === "super_admin";
+
+let isAuthorizedEmployer = false;
+
+if (req.user.role === "employer") {
+  const employerJobs = await repo.jobs.list({
+    employer_id: req.user.sub,
+  });
+
+  const candidate = await repo.users.findById(req.params.id);
+
+  if (candidate?.role === "student") {
+    isAuthorizedEmployer = employerJobs.some(
+      (job) =>
+        String(job.employer_id) === String(req.user.sub) &&
+        (
+          String(candidate.domain_role_id) ===
+          String(job.domain_role_id)
+        )
+    );
+  }
+}
+
+if (!isOwner && !isAdmin && !isAuthorizedEmployer) {
+  return res.status(403).json({
+    error: "You are not authorized to view this profile.",
+  });
+}
 
     const user = await repo.users.findById(req.params.id);
 

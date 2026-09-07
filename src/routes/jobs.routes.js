@@ -1539,6 +1539,7 @@ router.post(
       // 8. Online interviews should have a meeting link
       if (interviewType === "online") {
   if (!meeting_link || !String(meeting_link).trim()) {
+    
     return res.status(400).json({
       error: "Meeting link is required for an online interview.",
     });
