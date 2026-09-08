@@ -124,7 +124,31 @@ router.post("/sync", async (req, res, next) => {
       if (req.body.role && req.body.role !== user.role) {
         console.log(`[SYNC] Updating user role from ${user.role} to ${req.body.role}`);
         updateData.role = req.body.role;
-        updateData.domain_role_id = req.body.role === 'student' ? (req.body.domainRoleId || null) : null;
+      }
+
+      const effectiveRole = updateData.role || user.role;
+      const targetDomain =
+        req.body.domainRoleId ||
+        req.body.domain_role_id ||
+        clerkUser.unsafeMetadata?.domain_role_id ||
+        null;
+
+      if (effectiveRole === "student") {
+        if (targetDomain && targetDomain !== user.domain_role_id) {
+          console.log(
+            `[SYNC] Updating student domain_role_id from ${user.domain_role_id} to ${targetDomain}`
+          );
+          updateData.domain_role_id = targetDomain;
+        } else if (!user.domain_role_id) {
+          const allRoles = (await repo.domainRoles.list()) || [];
+          const aiRole = allRoles.find((r) => r.domain_name === "AI Engineer");
+          if (aiRole) {
+            console.log(
+              `[SYNC] Student missing domain_role_id; assigning default ${aiRole.domain_name}`
+            );
+            updateData.domain_role_id = aiRole.domain_role_id || aiRole.id;
+          }
+        }
       }
 
       // Apply updates to the database if needed
