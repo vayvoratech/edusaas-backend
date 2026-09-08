@@ -17,6 +17,21 @@ if (APP_ENV) {
 require("dotenv").config();
 
 
+const rawAimlUrl = (
+  process.env.AIML_SERVICE_URL ||
+  process.env.AIML_BASE_URL ||
+  "https://edusaas-aiml-parb.onrender.com"
+).trim().replace(/\/+$/, "");
+
+const rawFraudWs = (
+  process.env.FRAUD_AI_WS_URL ||
+  (rawAimlUrl.startsWith("https://")
+    ? rawAimlUrl.replace("https://", "wss://") + "/ws/proctor"
+    : rawAimlUrl.startsWith("http://")
+    ? rawAimlUrl.replace("http://", "ws://") + "/ws/proctor"
+    : "ws://127.0.0.1:10000/ws/proctor")
+).trim();
+
 module.exports = {
   appEnv: APP_ENV || "default",
   port: parseInt(process.env.PORT, 10) || 5000,
@@ -36,7 +51,8 @@ module.exports = {
   smtpPass: process.env.SMTP_PASS || "",
   smtpFrom: process.env.SMTP_FROM || "",
 
-  aimlServiceUrl: process.env.AIML_SERVICE_URL || "http://127.0.0.1:8000",
-  plagiarismBaseUrl: process.env.PLAGIARISM_BASE_URL || "http://127.0.0.1:8002",
-  flaskQuizUrl: process.env.FLASK_QUIZ_URL || "http://127.0.0.1:5000",
+  aimlServiceUrl: rawAimlUrl,
+  fraudAiWsUrl: rawFraudWs,
+  plagiarismBaseUrl: rawAimlUrl,
+  flaskQuizUrl: rawAimlUrl,
 };

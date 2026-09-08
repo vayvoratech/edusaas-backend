@@ -1,6 +1,6 @@
 // src/services/aimlClient.js
 
-const { aimlServiceUrl, plagiarismBaseUrl } = require("../config/env");
+const { aimlServiceUrl } = require("../config/env");
 const crypto = require("crypto");
 
 /**
@@ -13,11 +13,16 @@ function clerkToInt(clerkId) {
 }
 
 /**
- * Converts a string ID into a stable UUID v4-like format
+ * Converts a string ID into a valid UUID v4 format
  */
 function clerkToUUID(clerkId) {
   if (!clerkId) return "00000000-0000-0000-0000-000000000000";
-  const hash = crypto.createHash("md5").update(String(clerkId)).digest("hex");
+  const str = String(clerkId);
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(str)) {
+    return str;
+  }
+  const hash = crypto.createHash("md5").update(str).digest("hex");
   return [
     hash.substring(0, 8),
     hash.substring(8, 12),
@@ -46,7 +51,6 @@ async function callAIML(endpoint, payload = null, method = "POST", customBaseUrl
     const baseUrl = customBaseUrl || aimlServiceUrl;
     const response = await fetch(`${baseUrl}${endpoint}`, options);
 
-    // In case of non-JSON responses from the FastAPI server (e.g. 500 HTML)
     let data;
     try {
       data = await response.json();
@@ -59,7 +63,6 @@ async function callAIML(endpoint, payload = null, method = "POST", customBaseUrl
     if (!response.ok) {
       const error = new Error(data.detail || data.message || "AI service failed");
       error.status = response.status;
-
       throw error;
     }
 
@@ -71,70 +74,121 @@ async function callAIML(endpoint, payload = null, method = "POST", customBaseUrl
 }
 
 // ---------------------------------------------------------------------
-// Dropout & Attrition Risk
+// 1. Dropout & Attrition Risk
 // ---------------------------------------------------------------------
 async function predictDropout(studentData) {
-  // studentData schema matches DropoutInput in dropout_api.py
-  if (studentData.student_id) studentData.student_id = clerkToInt(studentData.student_id);
-  return callAIML("/dropout/predict", studentData, "POST");
+  const payload = {
+    ...studentData,
+    student_id: clerkToUUID(studentData.student_id),
+  };
+  return callAIML("/api/dropout/predict", payload, "POST");
 }
 
 // ---------------------------------------------------------------------
-// Course Recommendations
+// 2. Course Recommendations
 // ---------------------------------------------------------------------
-async function getRecommendations(userId, courseName) {
-  // GET /recommendation/recommend?user_id=...&course_name=...
-  const queryParams = new URLSearchParams({
+async function getRecommendations(param1, param2, param3) {
+  let userId, courseName, courses, ratings, user, prerequisites, completedCourses;
+  if (typeof param1 === "object" && param1 !== null) {
+    ({
+      userId,
+      courseName,
+      courses = [],
+      ratings = [],
+      user = null,
+      prerequisites = [],
+      completedCourses = [],
+    } = param1);
+  } else {
+    userId = param1;
+    courseName = param2;
+    courses = param3 || [];
+  }
+
+  const payload = {
     user_id: clerkToUUID(userId),
-    course_name: courseName,
-  });
-  return callAIML(`/recommendation/recommend?${queryParams.toString()}`, null, "GET");
+    course_name: courseName || "Machine Learning",
+    courses: courses || [],
+    ratings: ratings || [],
+    user: user || null,
+    prerequisites: prerequisites || [],
+    completed_courses: completedCourses || [],
+  };
+  return callAIML("/api/recommendation/recommend", payload, "POST");
 }
 
 // ---------------------------------------------------------------------
-// Sentiment Analysis
+// 3. Predictive Hiring Candidate Match
 // ---------------------------------------------------------------------
-async function analyzeSentiment(postData) {
-  // postData matches SentimentRequest
-  if (postData.student_id) postData.student_id = clerkToInt(postData.student_id);
-  return callAIML("/sentiment/predict-sentiment", postData, "POST");
+async function predictHiring(hiringData) {
+  const payload = {
+    experience_years: Number(hiringData.experience_years || 0),
+    required_experience_years: Number(hiringData.required_experience_years || 0),
+    skill_match_score: Number(hiringData.skill_match_score || 0),
+    experience_match_score: Number(hiringData.experience_match_score || 0),
+    domain_match: Number(hiringData.domain_match ? 1 : 0),
+    profile_score: Number(hiringData.profile_score || 0),
+  };
+  return callAIML("/api/hiring/predict", payload, "POST");
 }
 
 // ---------------------------------------------------------------------
-// Fraud & Integrity Detection
+// 4. Code Plagiarism Detection
+// ---------------------------------------------------------------------
+async function checkCodePlagiarism(payload) {
+  // payload: { language, submission: { submission_id, code }, comparison_submissions: [{ submission_id, code }] }
+  try {
+    return await callAIML("/api/plagiarism/api/plagiarism/check", payload, "POST");
+  } catch (err) {
+    // Fallback if mounted without prefix duplication
+    return await callAIML("/api/plagiarism/check", payload, "POST");
+  }
+}
+
+
+// ---------------------------------------------------------------------
+// 5. Descriptive Answer Evaluation (XLNet)
+// ---------------------------------------------------------------------
+async function evaluateDescriptiveAnswer({ questionText, studentAnswerText, referenceAnswerText }) {
+  const payload = {
+    question_text: String(questionText || "").trim(),
+    student_answer_text: String(studentAnswerText || "").trim(),
+    reference_answer_text: String(referenceAnswerText || "").trim(),
+  };
+  return callAIML("/api/evaluation/evaluate", payload, "POST");
+}
+
+// ---------------------------------------------------------------------
+// 6. Fraud & Integrity Detection
 // ---------------------------------------------------------------------
 async function predictFraud(fraudData) {
-  // fraudData matches FraudRequest schema
   if (fraudData.student_id) fraudData.student_id = clerkToInt(fraudData.student_id);
   return callAIML("/fraud/predict", fraudData, "POST");
 }
 
 // ---------------------------------------------------------------------
-// Code Plagiarism Detection (Placeholder for external code_plagiarism server)
+// 7. Community Sentiment & Toxicity
 // ---------------------------------------------------------------------
-async function checkCodePlagiarism(payload) {
-  // Assuming a separate API endpoint or merged API for code plagiarism
-  // payload: { submission_id, user_id, code, language, question_id }
-  if (payload.user_id) payload.user_id = clerkToInt(payload.user_id);
-  return callAIML("/plagiarism/check", payload, "POST", plagiarismBaseUrl);
+async function analyzeSentiment(postData) {
+  if (postData.student_id) postData.student_id = clerkToInt(postData.student_id);
+  return callAIML("/sentiment/predict-sentiment", postData, "POST");
 }
 
-// ---------------------------------------------------------------------
-// Toxicity Detection
-// ---------------------------------------------------------------------
 async function analyzeToxicity(postData) {
-  // postData matches ToxicityRequest
   if (postData.student_id) postData.student_id = clerkToInt(postData.student_id);
   return callAIML("/toxicity/predict", postData, "POST");
 }
 
-// Note: Subjective Answer Evaluator has been kept aside per requirements.
-
 module.exports = {
+  callAIML,
+  clerkToUUID,
+  clerkToInt,
   predictDropout,
   getRecommendations,
+  predictHiring,
+  checkCodePlagiarism,
+  evaluateDescriptiveAnswer,
+  predictFraud,
   analyzeSentiment,
   analyzeToxicity,
-  predictFraud,
-  checkCodePlagiarism,
 };

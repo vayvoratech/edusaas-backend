@@ -42,15 +42,40 @@ router.get("/", authRequired, async (req, res, next) => {
 
     let aiResult = [];
     try {
-      // Find a base course name. As a fallback, we use a generic keyword.
-      // In a full implementation, you might fetch the student's most recent course title.
+      const allCourses = (await repo.courses.list()) || [];
+      const userEnrollments = (await repo.enrollments.listByUser(req.user.sub)) || [];
+      const completedCourses = userEnrollments
+        .filter((e) => e.status === "completed" || e.completed)
+        .map((e) => ({ course_id: e.course_id }));
+
       let baseCourseName = "Machine Learning";
-      const aiData = await aimlClient.getRecommendations(req.user.sub, baseCourseName);
+      if (userEnrollments.length > 0) {
+        const lastCourse = allCourses.find((c) => c.id === userEnrollments[0].course_id);
+        if (lastCourse && lastCourse.title) baseCourseName = lastCourse.title;
+      } else if (allCourses.length > 0 && allCourses[0].title) {
+        baseCourseName = allCourses[0].title;
+      }
+
+      const formattedCourses = allCourses.map((c) => ({
+        id: String(c.id),
+        title: String(c.title || ""),
+        category: String(c.category || "Computer Science"),
+        difficulty: String(c.difficulty || "Beginner"),
+      }));
+
+      const aiData = await aimlClient.getRecommendations({
+        userId: req.user.sub,
+        courseName: baseCourseName,
+        courses: formattedCourses,
+        completedCourses: completedCourses,
+      });
+
       if (aiData && aiData.success && aiData.data) {
         aiResult = [{
-          type: 'ai_suggestions',
-          suggestions: aiData.data,
-          source: 'ai'
+          type: "ai_suggestions",
+          suggestions: aiData.data.recommendations || aiData.data,
+          learning_pathway: aiData.data.learning_pathway || [],
+          source: "ai",
         }];
       }
     } catch (aiErr) {

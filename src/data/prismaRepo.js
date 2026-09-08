@@ -1714,6 +1714,41 @@ module.exports = {
       }),
   },
 
+  plagiarismChecks: {
+    create: async ({ submission_id, status, highest_similarity, comparison_count, matches = [] }) => {
+      return prisma.plagiarism_checks.create({
+        data: {
+          submission_id,
+          status: status || "completed",
+          highest_similarity,
+          comparison_count: comparison_count || 0,
+          plagiarism_matches: {
+            create: (matches || []).map((m) => ({
+              matched_submission_id: m.submission_id,
+              original_token_similarity: m.original_token_similarity,
+              normalized_token_similarity: m.normalized_token_similarity,
+              weighted_ast_similarity: m.weighted_ast_similarity,
+              final_similarity: m.final_similarity,
+              risk_level: m.risk_level,
+            })),
+          },
+        },
+        include: {
+          plagiarism_matches: true,
+        },
+      });
+    },
+
+    findBySubmissionId: async (submission_id) => {
+      return prisma.plagiarism_checks.findFirst({
+        where: { submission_id },
+        include: { plagiarism_matches: true },
+        orderBy: { checked_at: "desc" },
+      });
+    },
+  },
+
+
   studentAnswers: {
   list: async () =>
     prisma.studentAnswer.findMany({

@@ -1070,15 +1070,32 @@ async function submitCode({
       comparison_submissions: comparison_submissions
     });
     
-    if (plagiarismResp && plagiarismResp.data && plagiarismResp.data.matches) {
-      const highRiskMatches = plagiarismResp.data.matches.filter(m => m.risk_level === "HIGH" || m.risk_level === "VERY_HIGH");
-      
+    const matches = (plagiarismResp && (plagiarismResp.matches || plagiarismResp.data?.matches)) || [];
+    const comparisonCount = (plagiarismResp && (plagiarismResp.comparison_count ?? plagiarismResp.data?.comparison_count)) || 0;
+
+    if (matches.length > 0) {
+      const highestSimilarity = Math.max(...matches.map((m) => Number(m.final_similarity || 0)), 0);
+      const highRiskMatches = matches.filter(
+        (m) => m.risk_level === "HIGH" || m.risk_level === "VERY_HIGH"
+      );
+
+      await repo.plagiarismChecks.create({
+        submission_id: submission.submission_id,
+        status: highRiskMatches.length > 0 ? "flagged" : "clean",
+        highest_similarity: highestSimilarity,
+        comparison_count: comparisonCount,
+        matches: matches,
+      });
+
       if (highRiskMatches.length > 0) {
-        console.warn(`[AIML Plagiarism] Flagged coding submission ${submission.submission_id} for plagiarism. Matches:`, highRiskMatches.length);
-        // You could update DB here to store the matches or flag the submission
-        // e.g., await repo.plagiarismMatches.saveMatches(plagiarismResp.data.matches);
+        console.warn(
+          `[AIML Plagiarism] Flagged coding submission ${submission.submission_id} for plagiarism. High-risk matches:`,
+          highRiskMatches.length
+        );
       } else {
-        console.log(`[AIML Plagiarism] Submission ${submission.submission_id} passed plagiarism check. (Compared with ${plagiarismResp.data.comparison_count} submissions)`);
+        console.log(
+          `[AIML Plagiarism] Submission ${submission.submission_id} passed plagiarism check with highest similarity ${highestSimilarity}%.`
+        );
       }
     }
   } catch (err) {
