@@ -5,6 +5,7 @@ const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
 const assessmentService = require("../services/assessmentService");
 const codingAssessmentService = require("../services/codingAssessmentService")
+const aimlClient = require("../services/aimlClient");
 console.log("ASSESSMENT SERVICE EXPORTS:", Object.keys(assessmentService));
 
 const router = express.Router();
@@ -62,6 +63,39 @@ router.post("/", authRequired, async (req, res, next) => {
       score,
       answers: answers || [],
     });
+
+    try {
+      // Mocking session metrics for fraud detection
+      const fraudData = {
+        student_id: req.user.sub, // Will be hashed inside aimlClient.js
+        completion_percentage: 100,
+        watch_time_minutes: 60,
+        quiz_score: score,
+        rating: 4,
+        sessions_last_30_days: 10,
+        avg_session_minutes: 30,
+        videos_watched: 5,
+        assignments_attempted: 2,
+        discussion_interactions: 1,
+        login_count: 5,
+        device_count: req.body.device_count || 1, // e.g. from frontend telemetry
+        ip_changes: req.body.ip_changes || 0,
+        payment_status: "PAID",
+        enrollment_source: "WEB",
+        enrollment_status: "ACTIVE"
+      };
+
+      const fraudResp = await aimlClient.predictFraud(fraudData);
+      
+      if (fraudResp && fraudResp.data && fraudResp.data.is_fraudulent) {
+        console.warn(`[AIML Fraud] Flagged assessment ${assessment.id} for potential fraud`);
+        // We could flag the assessment in DB here
+        // await repo.assessments.flagFraud(assessment.id);
+      }
+    } catch (err) {
+      console.warn("[AIML Fraud Detection] Skipped or failed:", err.message);
+    }
+
     return res.status(201).json(assessment);
   } catch (err) {
     next(err);

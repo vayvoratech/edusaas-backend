@@ -258,11 +258,126 @@ const mapAnn = (a) => a && { ...a, scheduled_at: iso(a.scheduled_at), created_at
 module.exports = {
   prisma,
 
+  domainRoles: {
+    list: async () => prisma.domainRole.findMany({ orderBy: { domain_name: "asc" } }),
+  },
+
+  connections: {
+    sendRequest: async (requesterId, receiverId) => {
+      return await prisma.connection.upsert({
+        where: { requesterId_receiverId: { requesterId, receiverId } },
+        update: { status: "pending" },
+        create: { requesterId, receiverId, status: "pending" }
+      });
+    },
+    acceptRequest: async (connectionId, receiverId) => {
+      return await prisma.connection.updateMany({
+        where: { id: connectionId, receiverId, status: "pending" },
+        data: { status: "accepted" }
+      });
+    },
+    rejectRequest: async (connectionId, receiverId) => {
+      return await prisma.connection.updateMany({
+        where: { id: connectionId, receiverId, status: "pending" },
+        data: { status: "rejected" }
+      });
+    },
+    getConnections: async (userId) => {
+      // Get all accepted connections where user is either requester or receiver
+      return await prisma.connection.findMany({
+        where: {
+          status: "accepted",
+          OR: [{ requesterId: userId }, { receiverId: userId }]
+        },
+        include: {
+          requester: { select: { id: true, name: true, username: true, email: true, role: true } },
+          receiver: { select: { id: true, name: true, username: true, email: true, role: true } }
+        }
+      });
+    },
+    getPendingRequests: async (userId) => {
+      return await prisma.connection.findMany({
+        where: { receiverId: userId, status: "pending" },
+        include: {
+          requester: { select: { id: true, name: true, username: true, email: true, role: true } }
+        }
+      });
+    },
+    removeConnection: async (connectionId, userId) => {
+      // Find the connection first
+      const conn = await prisma.connection.findFirst({
+        where: {
+          id: connectionId,
+          OR: [{ requesterId: userId }, { receiverId: userId }]
+        }
+      });
+      
+      if (!conn) return { count: 0 };
+      
+      // Delete the notification if it was a pending request
+      if (conn.status === 'pending') {
+        // The requester is cancelling, or receiver rejecting
+        // We delete the notification for the receiver
+        const requester = await prisma.user.findUnique({ where: { id: conn.requesterId }});
+        if (requester) {
+          await prisma.notification.deleteMany({
+            where: {
+              user_id: conn.receiverId,
+              type: "connection_request",
+              message: { startsWith: requester.name || 'Someone' }
+            }
+          });
+        }
+      }
+
+      return await prisma.connection.deleteMany({
+        where: { id: connectionId }
+      });
+    }
+  },
+
   users: {
+    searchByUsername: async (username, excludeId = null) => {
+      const whereClause = { username: { contains: username, mode: "insensitive" } };
+      if (excludeId) whereClause.id = { not: excludeId };
+      
+      const users = await prisma.user.findMany({
+        where: whereClause,
+        select: { id: true, name: true, username: true, email: true, role: true },
+        take: 10
+      });
+
+      if (!excludeId || users.length === 0) return users;
+
+      // Fetch connections between excludeId and these users
+      const userIds = users.map(u => u.id);
+      const connections = await prisma.connection.findMany({
+        where: {
+          OR: [
+            { requesterId: excludeId, receiverId: { in: userIds } },
+            { requesterId: { in: userIds }, receiverId: excludeId }
+          ]
+        }
+      });
+
+      return users.map(u => {
+        const conn = connections.find(c => c.requesterId === u.id || c.receiverId === u.id);
+        if (conn) {
+          let status = conn.status;
+          if (status === 'pending') {
+            status = conn.requesterId === excludeId ? 'pending_sent' : 'pending_received';
+          }
+          return { ...u, connection_status: status, connection_id: conn.id };
+        }
+        return u;
+      });
+    },
     findById: async (id) =>
       mapUser(await prisma.user.findUnique({ where: { id }, include: userInclude })),
     findByEmail: async (email) =>
       mapUser(await prisma.user.findUnique({ where: { email }, include: userInclude })),
+    deleteByClerkId: async (clerk_id) => 
+      await prisma.user.delete({ where: { clerk_id } }),
     list: async (filters = {}) => {
       const where = {};
       if (filters.role) where.role = { name: filters.role };
@@ -531,6 +646,12 @@ module.exports = {
       if (filters.educator_id) where.educator_id = filters.educator_id;
       if (filters.category) where.category = filters.category;
       if (filters.difficulty) where.difficulty = filters.difficulty;
+      if (filters.search) {
+        where.OR = [
+          { title: { contains: filters.search, mode: 'insensitive' } },
+          { description: { contains: filters.search, mode: 'insensitive' } }
+        ];
+      }
       return (await prisma.course.findMany({ where, orderBy: { created_at: "desc" } })).map(mapCourse);
     },
     findById: async (id) => mapCourse(await prisma.course.findUnique({ where: { id } })),
@@ -660,7 +781,7 @@ interviews: {
 
 
   notifications: {
-  listByUser: async (user_id) =>
+  listByUser: async (user_id, limit = 50) =>
     (
       await prisma.notification.findMany({
         where: {
@@ -673,6 +794,7 @@ interviews: {
         orderBy: {
           created_at: "desc",
         },
+        take: limit || 50,
       })
     ).map(mapNotif),
 
@@ -696,6 +818,13 @@ interviews: {
         data: { read_status: true },
       })
     );
+  },
+
+  markAllRead: async (user_id) => {
+    return prisma.notification.updateMany({
+      where: { user_id, read_status: false },
+      data: { read_status: true },
+    });
   },
 },
 
@@ -1537,6 +1666,22 @@ interviews: {
           data,
         }),
       ),
+
+    getComparisonSubmissions: async (question_id, exclude_user_id) =>
+      prisma.coding_submissions.findMany({
+        where: {
+          question_id,
+          user_id: {
+            not: exclude_user_id,
+          },
+          status: "PASSED", // Only compare against successful submissions (optional but good practice)
+        },
+        select: {
+          submission_id: true,
+          source_code: true,
+        },
+        take: 50, // Limit comparisons for performance
+      }),
   },
 
   submissionTestResults: {
@@ -1644,6 +1789,41 @@ interviews: {
         },
       }),
   },
+
+  plagiarismChecks: {
+    create: async ({ submission_id, status, highest_similarity, comparison_count, matches = [] }) => {
+      return prisma.plagiarism_checks.create({
+        data: {
+          submission_id,
+          status: status || "completed",
+          highest_similarity,
+          comparison_count: comparison_count || 0,
+          plagiarism_matches: {
+            create: (matches || []).map((m) => ({
+              matched_submission_id: m.submission_id,
+              original_token_similarity: m.original_token_similarity,
+              normalized_token_similarity: m.normalized_token_similarity,
+              weighted_ast_similarity: m.weighted_ast_similarity,
+              final_similarity: m.final_similarity,
+              risk_level: m.risk_level,
+            })),
+          },
+        },
+        include: {
+          plagiarism_matches: true,
+        },
+      });
+    },
+
+    findBySubmissionId: async (submission_id) => {
+      return prisma.plagiarism_checks.findFirst({
+        where: { submission_id },
+        include: { plagiarism_matches: true },
+        orderBy: { checked_at: "desc" },
+      });
+    },
+  },
+
 
   studentAnswers: {
   list: async () =>
@@ -1875,6 +2055,24 @@ interviews: {
       );
     },
 
+    async toggleBookmark(user_id, post_id) {
+      const existing = await prisma.community_bookmarks.findFirst({
+        where: { user_id, post_id },
+      });
+
+      if (existing) {
+        await prisma.community_bookmarks.delete({
+          where: { id: existing.id },
+        });
+        return { bookmarked: false };
+      } else {
+        await prisma.community_bookmarks.create({
+          data: { user_id, post_id },
+        });
+        return { bookmarked: true };
+      }
+    },
+
     async getFeed({
       page = 1,
       limit = 10,
@@ -1890,20 +2088,6 @@ interviews: {
         status: "Published",
       };
 
-      if (user_role && user_role.toLowerCase() !== "admin") {
-        const { Prisma } = require("@prisma/client");
-        const roleCased = user_role.charAt(0).toUpperCase() + user_role.slice(1).toLowerCase();
-        
-        where.OR = [
-          { metadata: { equals: Prisma.AnyNull } },
-          { metadata: { path: ['allowedRoles'], array_contains: roleCased } },
-        ];
-        
-        if (current_user_id) {
-          where.OR.push({ author_id: current_user_id });
-        }
-      }
-
       if (post_type) {
         where.post_type = post_type;
       }
@@ -1916,21 +2100,55 @@ interviews: {
         where.author_id = author_id;
       }
 
-      return (
-        await prisma.community_posts.findMany({
-          where,
+      // Fetch posts (fetching buffer to account for role-filtered posts)
+      const isViewerAdmin = user_role && user_role.toLowerCase() === "admin";
+      const viewerRole = user_role ? user_role.toLowerCase() : null;
+      const fetchTake = (!isViewerAdmin && viewerRole) ? Math.max(limit * 3, 50) : limit;
 
-          include: communityPostInclude,
+      const posts = await prisma.community_posts.findMany({
+        where,
+        include: communityPostInclude,
+        orderBy: {
+          created_at: "desc",
+        },
+        skip: (page - 1) * limit,
+        take: fetchTake,
+      });
 
-          orderBy: {
-            created_at: "desc",
+      // Role visibility filter:
+      // Admins can see all posts.
+      // Authors can always see their own posts.
+      // For others, if metadata.allowedRoles is specified, viewer's role must be included.
+      const visiblePosts = posts.filter(p => {
+        if (isViewerAdmin) return true;
+        if (current_user_id && p.author_id === current_user_id) return true;
+
+        const meta = p.metadata;
+        if (meta && Array.isArray(meta.allowedRoles) && meta.allowedRoles.length > 0) {
+          if (!viewerRole) return false;
+          const allowed = meta.allowedRoles.map(r => String(r).toLowerCase());
+          return allowed.includes(viewerRole);
+        }
+        return true;
+      }).slice(0, limit);
+
+      let bookmarkedPostIds = new Set();
+      if (current_user_id && visiblePosts.length > 0) {
+        const bookmarks = await prisma.community_bookmarks.findMany({
+          where: {
+            user_id: current_user_id,
+            post_id: { in: visiblePosts.map((p) => p.id) },
           },
+          select: { post_id: true },
+        });
+        bookmarkedPostIds = new Set(bookmarks.map((b) => b.post_id));
+      }
 
-          skip: (page - 1) * limit,
-
-          take: limit,
-        })
-      ).map(mapCommunityPost);
+      return visiblePosts.map((p) => {
+        const mapped = mapCommunityPost(p);
+        mapped.bookmarked = bookmarkedPostIds.has(p.id);
+        return mapped;
+      });
     },
 
     async findByAuthor(author_id) {

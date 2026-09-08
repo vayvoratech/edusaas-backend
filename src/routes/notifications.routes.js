@@ -18,9 +18,31 @@ const router = express.Router();
  */
 router.get("/", authRequired, async (req, res, next) => {
   try {
-    const notifications = await repo.notifications.listByUser(req.user.sub);
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+    const notifications = await repo.notifications.listByUser(req.user.sub, limit);
 
     return res.json(notifications);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @openapi
+ * /api/notifications/read-all:
+ *   patch:
+ *     tags: [Notifications]
+ *     summary: Mark all notifications as read
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Successfully marked all as read
+ */
+router.patch("/read-all", authRequired, async (req, res, next) => {
+  try {
+    const result = await repo.notifications.markAllRead(req.user.sub);
+    return res.json({ success: true, count: result.count });
   } catch (err) {
     next(err);
   }

@@ -46,12 +46,20 @@ async function startInitialAssessment(userId) {
   }
 
   if (!user.domain_role_id) {
-    const error = new Error(
-      "Student has not selected a domain role"
-    );
-    error.status = 400;
-    throw error;
+    const allRoles = (await repo.domainRoles.list()) || [];
+    const aiRole = allRoles.find((r) => r.domain_name === "AI Engineer") || allRoles[0];
+    if (aiRole) {
+      await repo.users.update(userId, {
+        domain_role_id: aiRole.domain_role_id || aiRole.id,
+      });
+      user.domain_role_id = aiRole.domain_role_id || aiRole.id;
+    } else {
+      const error = new Error("Student has not selected a domain role");
+      error.status = 400;
+      throw error;
+    }
   }
+
  
 
   const requiredSkills =
@@ -778,11 +786,18 @@ async function startFinalAssessment(userId) {
   }
 
   if (!user.domain_role_id) {
-    const error = new Error(
-      "Student has not selected a domain role"
-    );
-    error.status = 400;
-    throw error;
+    const allRoles = (await repo.domainRoles.list()) || [];
+    const aiRole = allRoles.find((r) => r.domain_name === "AI Engineer") || allRoles[0];
+    if (aiRole) {
+      await repo.users.update(userId, {
+        domain_role_id: aiRole.domain_role_id || aiRole.id,
+      });
+      user.domain_role_id = aiRole.domain_role_id || aiRole.id;
+    } else {
+      const error = new Error("Student has not selected a domain role");
+      error.status = 400;
+      throw error;
+    }
   }
 
   const requiredSkills =

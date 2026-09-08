@@ -2,9 +2,12 @@ const WebSocket = require("ws");
 const { verifyAccessToken } = require("../config/jwt");
 const repo = require("../data");
 
+const { env } = require("../config/env");
+
 const FRAUD_AI_WS_URL =
   process.env.FRAUD_AI_WS_URL ||
-  "ws://127.0.0.1:8000/ws/proctor";
+  (env && env.fraudAiWsUrl) ||
+  "wss://edusaas-aiml-parb.onrender.com/ws/proctor";
 
 const activeSessions = new Map();
 
