@@ -151,7 +151,7 @@ function learningProgressByEnrollment(
         id: u.id,
         name: u.name,
         email: u.email,
-
+        clerk_id: u.clerk_id,
         role_id: u.role_id,
         role: u.role?.name || null,
 
@@ -376,6 +376,8 @@ module.exports = {
       mapUser(await prisma.user.findUnique({ where: { id }, include: userInclude })),
     findByEmail: async (email) =>
       mapUser(await prisma.user.findUnique({ where: { email }, include: userInclude })),
+    findByClerkId: async (clerk_id) =>
+      mapUser(await prisma.user.findUnique({ where: { clerk_id }, include: userInclude })),
     deleteByClerkId: async (clerk_id) => 
       await prisma.user.delete({ where: { clerk_id } }),
     list: async (filters = {}) => {

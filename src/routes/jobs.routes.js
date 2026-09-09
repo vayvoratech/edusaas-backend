@@ -620,10 +620,7 @@ console.log(
     domain_role_id: s.domain_role_id,
   }))
 );
-  console.log("NEW CODE IS RUNNING");
 for (const student of domainStudents) {
-  console.log("PROCESSING:", student.email);
-
   const matchedSkillNames = [];
   const missingSkillNames = [];
   const partialSkillNames = [];
@@ -1204,10 +1201,6 @@ if (req.body?.application_data) {
   }
 }
 
-console.log(
-  "BACKEND APPLICATION DATA:",
-  JSON.stringify(applicationData, null, 2)
-);
 
 // --------------------------------------------
 // Uploaded files
@@ -1386,7 +1379,6 @@ router.get(
 router.get(
   "/:jobId/applications/:applicationId/video",
   authRequired,
-  permissionRequired("jobs:view-applications"),
   async (req, res, next) => {
     try {
       const { jobId, applicationId } = req.params;
@@ -1399,19 +1391,31 @@ router.get(
         });
       }
 
-      const isOwner = job.employer_id === req.user.sub;
-      const isAdmin = req.user.role === "admin";
-
-      if (!isOwner && !isAdmin) {
-        return res.status(403).json({
-          error: "You are not authorized to view this video.",
-        });
-      }
-const application = await repo.applications.findById(applicationId);
+      const application = await repo.applications.findById(applicationId);
 
       if (!application || application.job_id !== jobId) {
         return res.status(404).json({
           error: "Application not found.",
+        });
+      }
+
+      const isStudent = req.user.role === "student";
+      const isOwner = job.employer_id === req.user.sub;
+      const isAdmin =
+        req.user.role === "admin" ||
+        req.user.role === "super_admin";
+
+      // Student can only view their own application video
+      if (isStudent && application.student_id !== req.user.sub) {
+        return res.status(403).json({
+          error: "You are not authorized to view this video.",
+        });
+      }
+
+      // Employer/admin authorization
+      if (!isStudent && !isOwner && !isAdmin) {
+        return res.status(403).json({
+          error: "You are not authorized to view this video.",
         });
       }
 
@@ -1424,10 +1428,13 @@ const application = await repo.applications.findById(applicationId);
         });
       }
 
-       const videoType =
-  application.application_data?.video?.file_name?.toLowerCase().endsWith(".webm")
-    ? "video/webm"
-    : application.application_data?.video?.file_type || "video/mp4";
+      const videoType =
+        application.application_data?.video?.file_name
+          ?.toLowerCase()
+          .endsWith(".webm")
+          ? "video/webm"
+          : application.application_data?.video?.file_type ||
+            "video/mp4";
 
       const command = new GetObjectCommand({
         Bucket: process.env.B2_BUCKET_NAME,

@@ -709,6 +709,7 @@ model QuizSession {
   session_id           Int                   @id @default(autoincrement())
   user_id              String                @db.Uuid
   domain_role_id       String                @db.Uuid
+  assessment_type      assessment_type       @default(INITIAL)
   start_time           DateTime              @default(now()) @db.Timestamp(6)
   end_time             DateTime?             @db.Timestamp(6)
   status               String                @default("In Progress") @db.VarChar(20)
@@ -729,6 +730,7 @@ model QuizSession {
 
   @@index([current_skill_id], map: "idx_quiz_sessions_current_skill")
   @@index([current_question_id], map: "idx_quiz_sessions_current_question")
+  @@index([user_id, assessment_type, status], map: "idx_quiz_sessions_user_assessment_status")
   @@index([domain_role_id], map: "idx_quiz_sessions_domain_role")
   @@index([status], map: "idx_quiz_sessions_status")
   @@index([user_id], map: "idx_quiz_sessions_user")

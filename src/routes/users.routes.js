@@ -77,7 +77,13 @@ router.post("/sync", async (req, res, next) => {
     
     console.log("[SYNC] Parsed Data - Email:", email, "Name:", name, "Username:", username, "Role:", role, "Domain:", domainRoleId);
 
-    let user = await repo.users.findByEmail(email);
+    let user = await repo.users.findByClerkId(clerkId);
+    console.log("[SYNC] findByClerkId result:", user);
+
+    if (!user) {
+      console.log("[SYNC] Clerk ID not found, checking email...");
+      user = await repo.users.findByEmail(email);
+    }
 
     if (!user) {
       console.log("[SYNC] Creating new user in postgres...");
