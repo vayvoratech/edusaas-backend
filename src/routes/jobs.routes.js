@@ -6,6 +6,7 @@ const fs = require("fs");
 const repo = require("../data");
 const { sendEmail } = require("../config/mail");
 const { authRequired, permissionRequired } = require("../middleware/auth");
+const aimlClient = require("../services/aimlClient");
 
 
 
@@ -748,6 +749,23 @@ for (const student of unappliedDomainStudents) {
     fitCategory = "Possible Fit";
   }
 
+  let aiHiringMatch = null;
+  try {
+    const aiResp = await aimlClient.predictHiring({
+      experience_years: 0,
+      required_experience_years: Number(job.experience_required || 0),
+      skill_match_score: Math.min(Math.max(skillMatch / 100, 0), 1),
+      experience_match_score: 1.0,
+      domain_match: 1,
+      profile_score: skillMatch,
+    });
+    if (aiResp && aiResp.data) {
+      aiHiringMatch = aiResp.data;
+    }
+  } catch (aiErr) {
+    console.warn("[AIML Hiring Match] Fallback:", aiErr.message);
+  }
+
   results.push({
     id: student.id,
     name: student.name,
@@ -759,6 +777,7 @@ for (const student of unappliedDomainStudents) {
 
     skill_match: skillMatch,
     fit_category: fitCategory,
+    ai_hiring_match: aiHiringMatch,
 
     matched_skills: matchedSkillNames,
     missing_skills: missingSkillNames,

@@ -1,6 +1,7 @@
 const express = require("express");
 const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
+const aimlClient = require("../services/aimlClient");
 
 const router = express.Router();
 
@@ -17,15 +18,21 @@ const router = express.Router();
  */
 router.get("/", authRequired, async (req, res, next) => {
   try {
-    // Recommendations are intended for students.
+    // Recommendations are intended for students who completed the assessment.
     if (req.user.role !== "student") {
+      return res.json([]);
+    }
+
+    const profile = await repo.profiles.findByUserId(req.user.sub);
+    const completedSession = await repo.quizSessions.findCompletedByUser(req.user.sub);
+    if (!profile?.initial_assessment_completed && !completedSession) {
       return res.json([]);
     }
 
     const recommendations =
       await repo.recommendations.listByUser(req.user.sub);
 
-    const result = await Promise.all(
+    const manualResult = await Promise.all(
       recommendations.map(async (recommendation) => {
         const course = await repo.courses.findById(
           recommendation.course_id
@@ -34,11 +41,54 @@ router.get("/", authRequired, async (req, res, next) => {
         return {
           ...recommendation,
           course,
+          source: 'manual'
         };
       })
     );
 
-    return res.json(result);
+    let aiResult = [];
+    try {
+      const allCourses = (await repo.courses.list()) || [];
+      const userEnrollments = (await repo.enrollments.listByUser(req.user.sub)) || [];
+      const completedCourses = userEnrollments
+        .filter((e) => e.status === "completed" || e.completed)
+        .map((e) => ({ course_id: e.course_id }));
+
+      let baseCourseName = "Machine Learning";
+      if (userEnrollments.length > 0) {
+        const lastCourse = allCourses.find((c) => c.id === userEnrollments[0].course_id);
+        if (lastCourse && lastCourse.title) baseCourseName = lastCourse.title;
+      } else if (allCourses.length > 0 && allCourses[0].title) {
+        baseCourseName = allCourses[0].title;
+      }
+
+      const formattedCourses = allCourses.map((c) => ({
+        id: String(c.id),
+        title: String(c.title || ""),
+        category: String(c.category || "Computer Science"),
+        difficulty: String(c.difficulty || "Beginner"),
+      }));
+
+      const aiData = await aimlClient.getRecommendations({
+        userId: req.user.sub,
+        courseName: baseCourseName,
+        courses: formattedCourses,
+        completedCourses: completedCourses,
+      });
+
+      if (aiData && aiData.success && aiData.data) {
+        aiResult = [{
+          type: "ai_suggestions",
+          suggestions: aiData.data.recommendations || aiData.data,
+          learning_pathway: aiData.data.learning_pathway || [],
+          source: "ai",
+        }];
+      }
+    } catch (aiErr) {
+      console.warn("[AIML] Recommendation engine fallback triggered:", aiErr.message);
+    }
+
+    return res.json([...manualResult, ...aiResult]);
 
   } catch (err) {
     next(err);

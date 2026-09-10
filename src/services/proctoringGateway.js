@@ -2,9 +2,11 @@ const WebSocket = require("ws");
 const { verifyAccessToken } = require("../config/jwt");
 const repo = require("../data");
 
+const { fraudAiWsUrl } = require("../config/env");
+
 const FRAUD_AI_WS_URL =
-  process.env.FRAUD_AI_WS_URL ||
-  "ws://127.0.0.1:8000/ws/proctor";
+  fraudAiWsUrl ||
+  "wss://edusaas-aiml-parb.onrender.com/ws/proctor";
 
 const activeSessions = new Map();
 
@@ -157,7 +159,7 @@ function connectToFraudAI() {
       error.code = "AI_CONNECTION_TIMEOUT";
 
       reject(error);
-    }, 10000);
+    }, 45000);
 
     aiSocket.once("open", () => {
       clearTimeout(timeout);
@@ -182,54 +184,69 @@ function connectToFraudAI() {
 async function persistProctoringEvent(
   sessionId,
   fraud,
-  rawResult = null
+  rawResult = null,
+  assessmentType = "QUIZ"
 ) {
   if (!sessionId || !fraud) {
     return null;
   }
 
-  const event = await repo.proctoringEvents.create({
-    session_id: sessionId,
+  try {
+    if (assessmentType === "CODING") {
+      console.log("[proctoring] Coding proctoring event:", {
+        session_id: sessionId,
+        violation_type: fraud.violation_type,
+        action: fraud.action,
+      });
+      return { session_id: sessionId, ...fraud };
+    }
 
-    event_source:
-      fraud.event_source || "AI",
+    const event = await repo.proctoringEvents.create({
+      session_id: sessionId,
 
-    violation_type:
-      fraud.violation_type || "UNKNOWN_VIOLATION",
+      event_source:
+        fraud.event_source || "AI",
 
-    action:
-      fraud.action || "WARNING",
+      violation_type:
+        fraud.violation_type || "UNKNOWN_VIOLATION",
 
-    severity:
-      fraud.severity || null,
+      action:
+        fraud.action || "WARNING",
 
-    message:
-      fraud.message || null,
+      severity:
+        fraud.severity || null,
 
-    metadata: rawResult
-      ? {
-          timestamp: rawResult.timestamp ?? null,
-          fraud,
-        }
-      : {
-          fraud,
-        },
-  });
+      message:
+        fraud.message || null,
 
-  console.log(
-  "[proctoring] Fraud event persisted",
-  {
-    session_id: sessionId,
-    event_id: event.event_id,
-    event_source: event.event_source,
-    violation_type: event.violation_type,
-    action: event.action,
-    raw_type: rawResult?.type ?? null,
-    raw_fraud: rawResult?.fraud ?? null,
+      metadata: rawResult
+        ? {
+            timestamp: rawResult.timestamp ?? null,
+            fraud,
+          }
+        : {
+            fraud,
+          },
+    });
+
+    console.log(
+      "[proctoring] Fraud event persisted",
+      {
+        session_id: sessionId,
+        event_id: event.event_id,
+        event_source: event.event_source,
+        violation_type: event.violation_type,
+        action: event.action,
+        raw_type: rawResult?.type ?? null,
+        raw_fraud: rawResult?.fraud ?? null,
+      }
+    );
+
+    return event;
+  } catch (err) {
+    console.warn("[proctoring] Could not persist proctoring event:", err.message);
+    return null;
   }
-);
-
-  return event;
 }
 
 async function terminateQuizSession(sessionId){
@@ -245,6 +262,26 @@ async function terminateQuizSession(sessionId){
   )
   console.log(`[proctoring] Quiz session ${sessionId} marked Terminated.`);
   return updatedSession
+}
+
+async function terminateAssessmentSession(sessionId, assessmentType = "QUIZ") {
+  if (!sessionId) {
+    return null;
+  }
+  if (assessmentType === "CODING") {
+    try {
+      const updated = await repo.codingSessions.update(sessionId, {
+        status: "Terminated",
+        ended_at: new Date(),
+      });
+      console.log(`[proctoring] Coding session ${sessionId} marked Terminated.`);
+      return updated;
+    } catch (err) {
+      console.error(`[proctoring] Failed to mark coding session ${sessionId} Terminated:`, err.message);
+      return null;
+    }
+  }
+  return terminateQuizSession(sessionId);
 }
 
 function attachProctoringGateway(server) {
@@ -275,6 +312,7 @@ function attachProctoringGateway(server) {
     let authenticated = false;
     let sessionId = null;
     let userId = null;
+    let assessmentType = "QUIZ";
     let aiSocket = null;
 
     // True when Python intentionally terminated the exam.
@@ -340,6 +378,7 @@ function attachProctoringGateway(server) {
 
             userId = auth.userId;
             sessionId = auth.sessionId;
+            assessmentType = auth.assessmentType || "QUIZ";
 
             /*
              * Prevent duplicate active proctoring
@@ -493,7 +532,8 @@ function attachProctoringGateway(server) {
                       terminationEventPromise = persistProctoringEvent(
                         sessionId,
                         fraud,
-                        aiMessage
+                        aiMessage,
+                        assessmentType
                       );
 
                       try {
@@ -512,14 +552,15 @@ function attachProctoringGateway(server) {
                       // The terminating AI decision is authoritative.
                       // Do not wait for EXAM_TERMINATED because the
                       // browser may close the WebSocket immediately.
-                      await terminateQuizSession(sessionId);
+                      await terminateAssessmentSession(sessionId, assessmentType);
 
                       examTerminated = true;
                     } else {
                       await persistProctoringEvent(
                         sessionId,
                         fraud,
-                        aiMessage
+                        aiMessage,
+                        assessmentType
                       );
                     }
 
@@ -615,17 +656,19 @@ function attachProctoringGateway(server) {
                             aiMessage.message ||
                             "Assessment terminated by fraud detection AI.",
                         },
-                        aiMessage
+                        aiMessage,
+                        assessmentType
                       );
 
                       terminationEventPersisted = true;
                     }
 
                     /*
-                    * Mark QuizSession as terminated.
+                    * Mark Quiz/Coding Session as terminated.
                     */
-                    await terminateQuizSession(
-                      sessionId
+                    await terminateAssessmentSession(
+                      sessionId,
+                      assessmentType
                     );
 
                     /*
@@ -688,9 +731,9 @@ function attachProctoringGateway(server) {
 
             aiSocket.on(
               "close",
-              () => {
+              (closeCode, closeReason) => {
                 console.log(
-                  "[proctoring] Python AI connection closed."
+                  `[proctoring] Python AI connection closed. code=${closeCode} reason=${closeReason?.toString()}`
                 );
 
                 /*
@@ -709,7 +752,10 @@ function attachProctoringGateway(server) {
 
                 /*
                 * Otherwise the AI connection disappeared
-                * unexpectedly.
+                * unexpectedly (e.g. Render spin-down or restart).
+                *
+                * Notify client but DO NOT kill the client WebSocket
+                * or abort the student's exam. The exam remains active.
                 */
                 if (
                   clientSocket.readyState ===
@@ -717,19 +763,14 @@ function attachProctoringGateway(server) {
                 ) {
                   sendJson(clientSocket, {
                     type:
-                      "PROCTORING_ERROR",
+                      "PROCTORING_WARNING",
 
                     code:
                       "AI_CONNECTION_CLOSED",
 
                     message:
-                      "Fraud detection AI disconnected.",
+                      "Fraud detection AI service is temporarily reconnecting. Your exam is active.",
                   });
-
-                  clientSocket.close(
-                    1011,
-                    "Fraud AI disconnected"
-                  );
                 }
               }
             );
@@ -774,9 +815,14 @@ function attachProctoringGateway(server) {
           aiSocket.readyState !==
             WebSocket.OPEN
         ) {
+          if (message.type === "VIDEO_FRAME") {
+            // Silently drop video frame while AI is reconnecting/unavailable
+            return;
+          }
+
           sendJson(clientSocket, {
             type:
-              "PROCTORING_ERROR",
+              "PROCTORING_WARNING",
 
             code:
               "AI_NOT_CONNECTED",

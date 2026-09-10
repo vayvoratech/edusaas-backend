@@ -66,6 +66,7 @@ router.get("/", async (req, res, next) => {
       educator_id: req.query.educator_id,
       category: req.query.category,
       difficulty: req.query.difficulty,
+      search: req.query.search,
     }));
   } catch (err) { next(err); }
 });

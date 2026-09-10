@@ -1,6 +1,6 @@
 const repo = require("../data");
 const { assessments } = require("../data/prismaRepo");
-const flaskService = require("./flaskServices");
+const adaptiveQuizService = require("./adaptiveQuizService");
 const skillGapService = require("./skillGapService");
 
 const INITIAL_ASSESSMENT_DURATION_MINUTES = Number(process.env.INITIAL_ASSESSMENT_DURATION_MINUTES || 30)
@@ -24,7 +24,7 @@ function toClientQuestion(question) {
   if (!question) return null;
   const { correct_option, ...rest } = question;
   return rest;
-} 
+}
 
 // Start the initial adaptive assessment
 async function startInitialAssessment(userId) {
@@ -36,58 +36,16 @@ async function startInitialAssessment(userId) {
     throw error;
   }
 
-  // Prevent starting a new assessment after completion
-  const profile = await repo.profiles.findByUserId(userId);
-
-  if (profile?.initial_assessment_completed === true) {
-    const error = new Error("Initial assessment already completed");
-    error.status = 409;
-    throw error;
-  }
-
-  if (!user.domain_role_id) {
-    const error = new Error(
-      "Student has not selected a domain role"
-    );
-    error.status = 400;
-    throw error;
-  }
- 
-
-  const requiredSkills =
-    (
-      await repo.domainRequiredSkills.findByDomainRoleId(
-        user.domain_role_id
-      )) || []
-
-  if (!requiredSkills.length) {
-    const error = new Error(
-      "No skills configured for the selected domain"
-    );
-    error.status = 404;
-    throw error;
-  }
-
-  const totalQuestions = requiredSkills.length * 10;
-
   /*
    * ============================================================
    * FIND EXISTING ASSESSMENT
    * ============================================================
-   *
-   * This now finds both:
-   *
-   *   In Progress -> student was actively taking the test
-   *   Paused      -> student previously stopped the test
-   *
-   * Completed / Timed Out sessions are NOT returned.
    */
-  const existingSession = await repo.quizSessions.findLatestByUserAndAssessmentType(userId, "INITIAL")
+  const existingSession = await repo.quizSessions.findLatestByUserAndAssessmentType(userId, "INITIAL");
 
   // ------------------------------------------------------------
   // INITIAL QUIZ IS COMPLETED -> CHECK CODING PHASE
   // ------------------------------------------------------------
- 
   if (existingSession?.status === "Completed") {
     const codingSession =
       await repo.codingSessions.findBySessionAndUser(
@@ -115,8 +73,6 @@ async function startInitialAssessment(userId) {
     }
 
     // Coding is already terminal.
-    // Timed Out is also terminal because the coding completion
-    // service calculates the final readiness score for it.
     if (
       codingSession &&
       (codingSession.status === "Completed" ||
@@ -138,41 +94,82 @@ async function startInitialAssessment(userId) {
     };
   }
 
-  // Terminal state - do not create new session
-    if (existingSession) {
-      if (existingSession.status === "Completed") {
-        const error = new Error(
-          "This assessment has already been completed."
-        );
+  // Prevent starting a brand-new assessment after full completion
+  const profile = await repo.profiles.findByUserId(userId);
 
-        error.status = 409;
-        error.code = "ASSESSMENT_ALREADY_COMPLETED";
+  if (profile?.initial_assessment_completed === true) {
+    const error = new Error("Initial assessment already completed");
+    error.status = 409;
+    throw error;
+  }
 
-        throw error;
-      }
-
-      if (existingSession.status === "Terminated") {
-        const error = new Error(
-          "This assessment has been terminated and cannot be restarted."
-        );
-
-        error.status = 409;
-        error.code = "ASSESSMENT_TERMINATED";
-
-        throw error;
-      }
-
-      if (existingSession.status === "Timed Out") {
-        const error = new Error(
-          "This assessment has already expired."
-        );
-
-        error.status = 409;
-        error.code = "ASSESSMENT_TIME_EXPIRED";
-
-        throw error;
-      }
+  if (!user.domain_role_id) {
+    const allRoles = (await repo.domainRoles.list()) || [];
+    const aiRole = allRoles.find((r) => r.domain_name === "AI Engineer") || allRoles[0];
+    if (aiRole) {
+      await repo.users.update(userId, {
+        domain_role_id: aiRole.domain_role_id || aiRole.id,
+      });
+      user.domain_role_id = aiRole.domain_role_id || aiRole.id;
+    } else {
+      const error = new Error("Student has not selected a domain role");
+      error.status = 400;
+      throw error;
     }
+  }
+
+  const requiredSkills =
+    (
+      await repo.domainRequiredSkills.findByDomainRoleId(
+        user.domain_role_id
+      )) || [];
+
+  if (!requiredSkills.length) {
+    const error = new Error(
+      "No skills configured for the selected domain"
+    );
+    error.status = 404;
+    throw error;
+  }
+
+  const totalQuestions = requiredSkills.length * 10;
+
+
+  // Terminal state - do not create new session
+  if (existingSession) {
+    if (existingSession.status === "Completed") {
+      const error = new Error(
+        "This assessment has already been completed."
+      );
+
+      error.status = 409;
+      error.code = "ASSESSMENT_ALREADY_COMPLETED";
+
+      throw error;
+    }
+
+    if (existingSession.status === "Terminated") {
+      const error = new Error(
+        "This assessment has been terminated and cannot be restarted."
+      );
+
+      error.status = 409;
+      error.code = "ASSESSMENT_TERMINATED";
+
+      throw error;
+    }
+
+    if (existingSession.status === "Timed Out") {
+      const error = new Error(
+        "This assessment has already expired."
+      );
+
+      error.status = 409;
+      error.code = "ASSESSMENT_TIME_EXPIRED";
+
+      throw error;
+    }
+  }
 
   /*
    * ============================================================
@@ -306,57 +303,57 @@ async function startInitialAssessment(userId) {
  * Recover the question from the persisted adaptive quiz state
  * instead of failing the entire assessment.
  */
-  let currentQuestion = null;
+    let currentQuestion = null;
 
-  if (existingSession.current_question_id) {
-    currentQuestion = await repo.questions.findById(
-      existingSession.current_question_id
-    );
-  }
-
-  if (!currentQuestion) {
-    const existingState = await repo.quizStates.findById(
-      existingSession.session_id,
-      existingSession.current_skill_id
-    );
-
-    if (!existingState || !existingState.state) {
-      const error = new Error(
-        "Assessment cannot be resumed because its current quiz state is missing."
+    if (existingSession.current_question_id) {
+      currentQuestion = await repo.questions.findById(
+        existingSession.current_question_id
       );
-
-      error.status = 500;
-      throw error;
     }
 
-    const questions = await repo.questions.findBySkill(
-      existingSession.current_skill_id,
-      "INITIAL"
-    );
-
-    const questionResponse = await flaskService.getNextQuestion({
-      state: existingState.state,
-      questions,
-    });
-
-    if (!questionResponse?.question) {
-      const error = new Error(
-        "Unable to recover the current assessment question."
+    if (!currentQuestion) {
+      const existingState = await repo.quizStates.findById(
+        existingSession.session_id,
+        existingSession.current_skill_id
       );
 
-      error.status = 500;
-      throw error;
-    }
+      if (!existingState || !existingState.state) {
+        const error = new Error(
+          "Assessment cannot be resumed because its current quiz state is missing."
+        );
 
-    currentQuestion = questionResponse.question;
-
-    await repo.quizSessions.update(
-      existingSession.session_id,
-      {
-        current_question_id: currentQuestion.question_id,
+        error.status = 500;
+        throw error;
       }
-    );
-  }
+
+      const questions = await repo.questions.findBySkill(
+        existingSession.current_skill_id,
+        "INITIAL"
+      );
+
+      const questionResponse = await adaptiveQuizService.getNextQuestion({
+        state: existingState.state,
+        questions,
+      });
+
+      if (!questionResponse?.question) {
+        const error = new Error(
+          "Unable to recover the current assessment question."
+        );
+
+        error.status = 500;
+        throw error;
+      }
+
+      currentQuestion = questionResponse.question;
+
+      await repo.quizSessions.update(
+        existingSession.session_id,
+        {
+          current_question_id: currentQuestion.question_id,
+        }
+      );
+    }
     /*
      * ----------------------------------------------------------
      * CURRENT REMAINING TIME (DISPLAY ONLY — NOT PERSISTED)
@@ -435,8 +432,8 @@ async function startInitialAssessment(userId) {
               ? "completed"
               : item.skill_id ===
                 existingSession.current_skill_id
-              ? "current"
-              : "upcoming",
+                ? "current"
+                : "upcoming",
         })
       ),
     };
@@ -532,7 +529,7 @@ async function startInitialAssessment(userId) {
 
       domain_role_id:
         user.domain_role_id,
-      
+
       assessment_type: "INITIAL",
 
       start_time: startTime,
@@ -567,7 +564,7 @@ async function startInitialAssessment(userId) {
 
 
   const stateResponse =
-    await flaskService.createQuizState({
+    await adaptiveQuizService.createQuizState({
       session_id:
         quizSession.session_id,
 
@@ -581,8 +578,6 @@ async function startInitialAssessment(userId) {
       assessment_type: "INITIAL",
     });
 
-    
-console.log(stateResponse);
 
   const state =
     stateResponse.state;
@@ -626,16 +621,12 @@ console.log(stateResponse);
    * ----------------------------------------------------------
    */
 
-  console.log("STEP 4: CALLING FLASK GET NEXT QUESTION");
   const questionResponse =
-    await flaskService.getNextQuestion({
+    await adaptiveQuizService.getNextQuestion({
       state,
 
       questions,
     });
-
-    console.log("STEP 5: FLASK QUESTION RESPONSE");
-console.log(questionResponse);
 
   if (!questionResponse.question) {
     const error = new Error(
@@ -646,20 +637,16 @@ console.log(questionResponse);
     throw error;
   }
 
- 
-  
-// --------------------------------------------------
-// Response
-// --------------------------------------------------
 
-  
+
+  // --------------------------------------------------
+  // Response
+  // --------------------------------------------------
+
+
 
   const firstQuestion = questionResponse.question;
   const actualQuestionId = firstQuestion?.question_id || firstQuestion?.id;
-
-  console.log("FIRST QUESTION:", firstQuestion);
-  console.log("FIRST QUESTION ID:", actualQuestionId);
-  console.log("SESSION ID:", quizSession.session_id);
 
   if (!actualQuestionId) {
     throw new Error("AI service returned a question without a valid ID (question_id or id missing).");
@@ -778,11 +765,18 @@ async function startFinalAssessment(userId) {
   }
 
   if (!user.domain_role_id) {
-    const error = new Error(
-      "Student has not selected a domain role"
-    );
-    error.status = 400;
-    throw error;
+    const allRoles = (await repo.domainRoles.list()) || [];
+    const aiRole = allRoles.find((r) => r.domain_name === "AI Engineer") || allRoles[0];
+    if (aiRole) {
+      await repo.users.update(userId, {
+        domain_role_id: aiRole.domain_role_id || aiRole.id,
+      });
+      user.domain_role_id = aiRole.domain_role_id || aiRole.id;
+    } else {
+      const error = new Error("Student has not selected a domain role");
+      error.status = 400;
+      throw error;
+    }
   }
 
   const requiredSkills =
@@ -951,7 +945,7 @@ async function startFinalAssessment(userId) {
         );
 
       const questionResponse =
-        await flaskService.getNextQuestion({
+        await adaptiveQuizService.getNextQuestion({
           state: existingState.state,
           questions,
         });
@@ -1038,7 +1032,7 @@ async function startFinalAssessment(userId) {
         Math.max(
           0,
           totalQuestions -
-            questionsAnswered
+          questionsAnswered
         ),
 
       skills:
@@ -1059,8 +1053,8 @@ async function startFinalAssessment(userId) {
                 ? "completed"
                 : item.skill_id ===
                   existingSession.current_skill_id
-                ? "current"
-                : "upcoming",
+                  ? "current"
+                  : "upcoming",
           })
         ),
     };
@@ -1191,7 +1185,7 @@ async function startFinalAssessment(userId) {
    * ----------------------------------------------------------
    */
   const stateResponse =
-    await flaskService.createQuizState({
+    await adaptiveQuizService.createQuizState({
       session_id:
         quizSession.session_id,
 
@@ -1258,7 +1252,7 @@ async function startFinalAssessment(userId) {
    * ----------------------------------------------------------
    */
   const questionResponse =
-    await flaskService.getNextQuestion({
+    await adaptiveQuizService.getNextQuestion({
       state,
       questions,
     });
@@ -1486,19 +1480,19 @@ async function activateInitialAssessment(userId, sessionId) {
     throw error;
   }
 
-   const activeSession =
+  const activeSession =
     await repo.quizSessions.findActiveByUser(userId);
 
-    if (
-      activeSession &&
-      activeSession.session_id !== sessionId
-    ) {
-      const error = new Error(
-        `Another assessment is already in progress (session ${activeSession.session_id}).`
-      );
-      error.status = 409;
-      error.code = "ANOTHER_ASSESSMENT_IN_PROGRESS";
-      throw error;
+  if (
+    activeSession &&
+    activeSession.session_id !== sessionId
+  ) {
+    const error = new Error(
+      `Another assessment is already in progress (session ${activeSession.session_id}).`
+    );
+    error.status = 409;
+    error.code = "ANOTHER_ASSESSMENT_IN_PROGRESS";
+    throw error;
   }
 
   // This is the moment the exam clock actually starts.
@@ -2430,7 +2424,7 @@ async function submitInitialAssessmentAnswer(
     throw error;
   }
 
-  if(quizSession.current_question_id !== questionId){
+  if (quizSession.current_question_id !== questionId) {
     const error = new Error(
       "This is not the current question"
     );
@@ -2455,7 +2449,7 @@ async function submitInitialAssessmentAnswer(
     marks: question.marks
   };
 
-  const submitResponse = await flaskService.submitAnswer({
+  const submitResponse = await adaptiveQuizService.submitAnswer({
     state,
     question: aiQuestion,
     selected_option: answer,
@@ -2494,62 +2488,62 @@ async function submitInitialAssessmentAnswer(
   );
 
   const skillOrder = [
-  "Python",
-  "SQL",
-  "Machine Learning",
-  "Deep Learning",
-  "Git",
-];
+    "Python",
+    "SQL",
+    "Machine Learning",
+    "Deep Learning",
+    "Git",
+  ];
 
-requiredSkills.sort((a, b) => {
-  const indexA = skillOrder.indexOf(a.skill.skill_name);
-  const indexB = skillOrder.indexOf(b.skill.skill_name);
+  requiredSkills.sort((a, b) => {
+    const indexA = skillOrder.indexOf(a.skill.skill_name);
+    const indexB = skillOrder.indexOf(b.skill.skill_name);
 
-  return indexA - indexB;
-});
+    return indexA - indexB;
+  });
   const completedResults = await repo.studentSkillResults.findBySessionId(
     sessionId
   );
   const completedSkillIds = new Set(completedResults.map((r) => r.skill_id));
 
   const assessmentMeta = {
-  total_skills: requiredSkills.length,
-  questions_per_skill: 10,
-  total_questions: requiredSkills.length * 10,
+    total_skills: requiredSkills.length,
+    questions_per_skill: 10,
+    total_questions: requiredSkills.length * 10,
 
-  current_skill_index: requiredSkills.findIndex(
-    (skill) => skill.skill_id === quizSession.current_skill_id
-  ),
+    current_skill_index: requiredSkills.findIndex(
+      (skill) => skill.skill_id === quizSession.current_skill_id
+    ),
 
-  overall_question: (quizSession.questions_answered || 0) + 1,
+    overall_question: (quizSession.questions_answered || 0) + 1,
 
-  remaining_questions:
-    requiredSkills.length * 10 -
-    ((quizSession.questions_answered || 0) + 1),
+    remaining_questions:
+      requiredSkills.length * 10 -
+      ((quizSession.questions_answered || 0) + 1),
 
-  skills: requiredSkills.map((item) => ({
-    skill_id: item.skill_id,
-    skill_name: item.skill.skill_name,
+    skills: requiredSkills.map((item) => ({
+      skill_id: item.skill_id,
+      skill_name: item.skill.skill_name,
 
-    status: completedSkillIds.has(item.skill_id)
-      ? "completed"
-      : item.skill_id === quizSession.current_skill_id
-      ? "current"
-      : "upcoming",
-  })),
-};
+      status: completedSkillIds.has(item.skill_id)
+        ? "completed"
+        : item.skill_id === quizSession.current_skill_id
+          ? "current"
+          : "upcoming",
+    })),
+  };
 
 
   // Skill not finished yet — just hand back the next question
   if (!result.skill_completed) {
     const questions = await repo.questions.findBySkill(skillId, quizSession.assessment_type);
 
-    const nextQuestionResponse = await flaskService.getNextQuestion({
+    const nextQuestionResponse = await adaptiveQuizService.getNextQuestion({
       state: updatedState,
       questions,
     });
 
-    if(!nextQuestionResponse.question){
+    if (!nextQuestionResponse.question) {
       const error = new Error(
         "No next question is available"
       );
@@ -2574,7 +2568,7 @@ requiredSkills.sort((a, b) => {
         percentage: Math.round(
           (updatedState.questions_answered /
             assessmentMeta.questions_per_skill) *
-            100
+          100
         ),
       },
       question: toClientQuestion(nextQuestionResponse.question),
@@ -2582,7 +2576,7 @@ requiredSkills.sort((a, b) => {
   }
 
   // Skill finished — score it and store the result
-  const scoreResponse = await flaskService.calculateSkillScore({
+  const scoreResponse = await adaptiveQuizService.calculateSkillScore({
     state: updatedState,
   });
   const score = scoreResponse.result;
@@ -2609,19 +2603,19 @@ requiredSkills.sort((a, b) => {
   // Nothing left — assessment complete. This is the trigger point for
   // Skill Gap Analysis (Assessment Completed -> Load Results -> Load
   // Required Skills -> Python Skill Gap Engine -> ... -> Report).
- if (!nextRequired) {
-  await repo.quizSessions.update(sessionId, {
-    status: "Completed",
-    end_time: new Date(),
-  });
+  if (!nextRequired) {
+    await repo.quizSessions.update(sessionId, {
+      status: "Completed",
+      end_time: new Date(),
+    });
 
-  await repo.profiles.upsert(userId, {
-    initial_assessment_completed: true,
-  });
+    await repo.profiles.upsert(userId, {
+      initial_assessment_completed: true,
+    });
 
-  const allResults = await repo.studentSkillResults.findBySessionId(
-    sessionId
-  );
+    const allResults = await repo.studentSkillResults.findBySessionId(
+      sessionId
+    );
 
 
     // Quiz's own readiness metric: average % correct across skills.
@@ -2630,7 +2624,7 @@ requiredSkills.sort((a, b) => {
     // conflate the two.
     const quizReadinessScore = Math.round(
       allResults.reduce((sum, skill) => sum + Number(skill.percentage), 0) /
-        allResults.length
+      allResults.length
     );
 
     return {
@@ -2653,7 +2647,7 @@ requiredSkills.sort((a, b) => {
       quizSession.assessment_type
     );
 
-  const newStateResponse = await flaskService.createQuizState({
+  const newStateResponse = await adaptiveQuizService.createQuizState({
     session_id: sessionId,
     skill: {
       skill_id: nextRequired.skill_id,
@@ -2666,8 +2660,8 @@ requiredSkills.sort((a, b) => {
 
     ...(quizSession.assessment_type === "FINAL"
       ? {
-          current_difficulty: 2,
-        }
+        current_difficulty: 2,
+      }
       : {}),
   };
 
@@ -2683,12 +2677,12 @@ requiredSkills.sort((a, b) => {
     state: newState,
   });
 
-  const firstQuestionResponse = await flaskService.getNextQuestion({
+  const firstQuestionResponse = await adaptiveQuizService.getNextQuestion({
     state: newState,
     questions: nextQuestions,
   });
 
-  if(!firstQuestionResponse.question){
+  if (!firstQuestionResponse.question) {
     const error = new Error("No question available for the next skill")
     error.status = 500;
     throw error;
@@ -2717,16 +2711,16 @@ requiredSkills.sort((a, b) => {
       ((quizSession.questions_answered || 0) + 1),
 
     skills: requiredSkills.map((item) => ({
-  skill_id: item.skill_id,
-  skill_name: item.skill.skill_name,
+      skill_id: item.skill_id,
+      skill_name: item.skill.skill_name,
 
-  status:
-    completedSkillIds.has(item.skill_id)
-      ? "completed"
-      : item.skill_id === nextRequired.skill_id
-      ? "current"
-      : "upcoming",
-})),
+      status:
+        completedSkillIds.has(item.skill_id)
+          ? "completed"
+          : item.skill_id === nextRequired.skill_id
+            ? "current"
+            : "upcoming",
+    })),
   };
 
   return {
@@ -2838,4 +2832,4 @@ module.exports = {
   getAssessmentOverview,
 
 };
- 
+
