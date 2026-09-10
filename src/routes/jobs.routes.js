@@ -17,9 +17,11 @@ const router = express.Router();
 // --------------------------------------------------
 const uploadResume = require("../middleware/uploadResume");
 const uploadApplication = require("../middleware/uploadApplication");
+
 const {
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
 } = require("@aws-sdk/client-s3");
 
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
@@ -1130,6 +1132,126 @@ router.delete(
  *         description: Application submitted
  */
 
+// --------------------------------------------------
+// Generate presigned B2 URL for student video upload
+// --------------------------------------------------
+router.post(
+  "/:id/application-video-upload-url",
+  authRequired,
+  async (req, res, next) => {
+    try {
+      if (req.user.role !== "student") {
+        return res.status(403).json({
+          error: "Only students can upload application videos.",
+        });
+      }
+
+      const job = await repo.jobs.findById(req.params.id);
+
+      if (!job) {
+        return res.status(404).json({
+          error: "Job not found.",
+        });
+      }
+
+      if (job.status !== "open") {
+        return res.status(400).json({
+          error: "This job is not accepting applications.",
+        });
+      }
+
+      if (
+        job.application_deadline &&
+        new Date(job.application_deadline) < new Date()
+      ) {
+        return res.status(400).json({
+          error: "The application deadline for this job has passed.",
+        });
+      }
+
+      const existing = await repo.applications.findOne(
+        job.id,
+        req.user.sub
+      );
+
+      if (existing) {
+        return res.status(409).json({
+          error: "You have already applied for this job.",
+        });
+      }
+
+      const {
+        file_name,
+        file_type,
+        file_size,
+      } = req.body || {};
+
+      if (!file_name || !file_type || !file_size) {
+        return res.status(400).json({
+          error: "Video file information is required.",
+        });
+      }
+
+      if (!String(file_type).startsWith("video/")) {
+        return res.status(400).json({
+          error: "Only video files are allowed.",
+        });
+      }
+
+      const size = Number(file_size);
+
+      if (!Number.isFinite(size) || size <= 0) {
+        return res.status(400).json({
+          error: "Invalid video file size.",
+        });
+      }
+
+      const maxVideoSize = 100 * 1024 * 1024;
+
+      if (size > maxVideoSize) {
+        return res.status(400).json({
+          error: "Video file must be 100 MB or smaller.",
+        });
+      }
+
+      const safeFileName = path
+        .basename(String(file_name))
+        .replace(/[^a-zA-Z0-9._-]/g, "_");
+
+      const videoKey =
+        `applications/${job.id}/${req.user.sub}/${Date.now()}-${safeFileName}`;
+
+      const command = new PutObjectCommand({
+        Bucket: process.env.B2_BUCKET_NAME,
+        Key: videoKey,
+        ContentType: file_type,
+      });
+
+      const uploadUrl = await getSignedUrl(
+        b2Client,
+        command,
+        {
+          expiresIn: 600,
+          signableHeaders: new Set(["content-type"]),
+        }
+      );
+
+      return res.json({
+        upload_url: uploadUrl,
+        key: videoKey,
+        file_name: file_name,
+        file_type: file_type,
+        file_size: size,
+        storage: "backblaze_b2",
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+
+
 router.post(
   "/:id/apply",
   authRequired,
@@ -1261,33 +1383,77 @@ if (resumeFile) {
 // --------------------------------------------
 // Video → Backblaze B2
 // --------------------------------------------
+// --------------------------------------------
+// Video → Backblaze B2
+// --------------------------------------------
 
-if (!videoFile) {
-  return res.status(400).json({
-    error: "Video introduction is required.",
-  });
+if (videoFile) {
+  // Backward-compatible path:
+  // If an old client still sends the video to the backend,
+  // keep supporting it.
+  const videoKey =
+    `applications/${job.id}/${req.user.sub}/${Date.now()}-${videoFile.originalname}`;
+
+  await b2Client.send(
+    new PutObjectCommand({
+      Bucket: process.env.B2_BUCKET_NAME,
+      Key: videoKey,
+      Body: videoFile.buffer,
+      ContentType: videoFile.mimetype,
+    })
+  );
+
+  applicationData.video = {
+    file_name: videoFile.originalname,
+    file_type: videoFile.mimetype,
+    file_size: videoFile.size,
+    storage: "backblaze_b2",
+    key: videoKey,
+  };
+} else if (job.require_video){
+  const uploadedVideo = applicationData.video;
+
+  if (!uploadedVideo?.key) {
+    return res.status(400).json({
+      error: "Video introduction is required.",
+    });
+  }
+
+  const expectedPrefix =
+    `applications/${job.id}/${req.user.sub}/`;
+
+  if (!uploadedVideo.key.startsWith(expectedPrefix)) {
+    return res.status(403).json({
+      error: "Invalid application video.",
+    });
+  }
+
+  try {
+    const videoObject = await b2Client.send(
+      new HeadObjectCommand({
+        Bucket: process.env.B2_BUCKET_NAME,
+        Key: uploadedVideo.key,
+      })
+    );
+
+    applicationData.video = {
+      file_name: uploadedVideo.file_name,
+      file_type:
+        videoObject.ContentType ||
+        uploadedVideo.file_type ||
+        "video/webm",
+      file_size:
+        videoObject.ContentLength ||
+        uploadedVideo.file_size,
+      storage: "backblaze_b2",
+      key: uploadedVideo.key,
+    };
+  } catch (err) {
+    return res.status(400).json({
+      error: "Video upload was not completed. Please upload the video again.",
+    });
+  }
 }
-
-const videoKey =
-  `applications/${job.id}/${req.user.sub}/${Date.now()}-${videoFile.originalname}`;
-
-await b2Client.send(
-  new PutObjectCommand({
-    Bucket: process.env.B2_BUCKET_NAME,
-    Key: videoKey,
-    Body: videoFile.buffer,
-    ContentType: videoFile.mimetype,
-  })
-);
-
-applicationData.video = {
-  file_name: videoFile.originalname,
-  file_type: videoFile.mimetype,
-  file_size: videoFile.size,
-  storage: "backblaze_b2",
-  key: videoKey,
-};
-
 
       // --------------------------------------------
       // Skill match
@@ -1301,7 +1467,6 @@ applicationData.video = {
       // --------------------------------------------
       // Create application
       // --------------------------------------------
-
       const application =
         await repo.applications.create({
           job_id: job.id,
@@ -1314,7 +1479,6 @@ applicationData.video = {
       // --------------------------------------------
       // Notify employer
       // --------------------------------------------
-
       await repo.notifications.create({
         user_id: job.employer_id,
         type: "application",

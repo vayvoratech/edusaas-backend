@@ -734,11 +734,12 @@ module.exports = {
     student_name: application.student?.name || null,
     student_email: application.student?.email || null,
   })),
-
-  listByStudent: async (student_id) =>
-    (await prisma.application.findMany({ where: { student_id } })).map(mapApp),
+listByStudent: async (student_id) =>
+(await prisma.application.findMany({
+where: { student_id }, orderBy:{applied_at:"desc"},
+})
+).map(mapApp),
 },
-
 interviews: {
   findById: async (id) =>
     safeQuery(
@@ -1476,7 +1477,6 @@ interviews: {
         },
       });
     },
-  
   findActiveWithResumeData: async (user_id, assessment_type = "INITIAL") =>
     prisma.quizSession.findFirst({
       where: {
