@@ -22,6 +22,12 @@ const PERMISSIONS = [
   // Assessments
   { name: "assessments:submit", category: "Learning", description: "Submit an assessment" },
 
+    // Mini Projects
+  { name: "mini-projects:create", category: "Learning", description: "Create mini project assignments",},
+  { name: "mini-projects:publish", category: "Learning", description: "Publish mini project assignments", },
+  { name: "mini-projects:view", category: "Learning", description: "View assigned mini projects", },
+  {name: "mini-projects:submit", category: "Learning", description: "Submit mini project", },
+
   // Gap report
   { name: "gap-report:view", category: "Learning", description: "View own gap report" },
 
@@ -86,6 +92,8 @@ const ROLE_PERMISSIONS = {
     "dashboards:student",
     "subscriptions:manage-mine",
     "profile:edit-own",
+    "mini-projects:view",
+    "mini-projects:submit"
   ],
   educator: [
     "courses:view", "courses:create", "courses:update", "courses:delete",
@@ -94,6 +102,9 @@ const ROLE_PERMISSIONS = {
     "certificates:issue",
     "dashboards:educator",
     "profile:edit-own",
+    "mini-projects:create",
+    "mini-projects:publish",
+    "mini-projects:view",
   ],
   employer: [
     "jobs:view", "jobs:create", "jobs:update", "jobs:delete",

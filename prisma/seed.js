@@ -26,33 +26,45 @@ const PERMISSIONS = [
   { name: "users:profile:update", category: "Users", description: "Update user profiles" },
 
   
-// Jobs
-{ name: "jobs:view", category: "Jobs", description: "View job postings" },
-{ name: "jobs:create", category: "Jobs", description: "Create a job posting" },
-{ name: "jobs:update", category: "Jobs", description: "Update a job posting" },
-{ name: "jobs:delete", category: "Jobs", description: "Delete a job posting" },
-{ name: "jobs:view-applications", category: "Jobs", description: "View job applications" },
+  // Jobs
+  { name: "jobs:view", category: "Jobs", description: "View job postings" },
+  { name: "jobs:create", category: "Jobs", description: "Create a job posting" },
+  { name: "jobs:update", category: "Jobs", description: "Update a job posting" },
+  { name: "jobs:delete", category: "Jobs", description: "Delete a job posting" },
+  { name: "jobs:view-applications", category: "Jobs", description: "View job applications" },
+
+    // Mini Projects
+  { name: "mini-projects:create", category: "Learning", description: "Create mini project assignments" },
+  { name: "mini-projects:publish", category: "Learning", description: "Publish mini project assignments" },
+  { name: "mini-projects:view", category: "Learning", description: "View assigned mini projects" },
+  { name: "mini-projects:submit", category: "Learning", description: "Submit mini project" },
+
 ];
 
 const ROLES = ["student", "educator", "admin", "employer"];
 
 const ROLE_PERMISSIONS = {
-  student: [
-    "dashboards:student",
-    "courses:enroll",
-    "users:profile:view",
-    "users:profile:update",
-  ],
-  educator: [
-    "dashboards:educator",
-    "courses:create",
-    "courses:update",
-    "courses:delete",
-    "courses:assign", // <-- This is the new permission being added
-    "lessons:create",
-    "lessons:update",
-    "lessons:delete",
-  ],
+    student: [
+      "dashboards:student",
+      "courses:enroll",
+      "users:profile:view",
+      "users:profile:update",
+      "mini-projects:view",
+      "mini-projects:submit",
+   ],
+    educator: [
+      "dashboards:educator",
+      "courses:create",
+      "courses:update",
+      "courses:delete",
+      "courses:assign",
+      "lessons:create",
+      "lessons:update",
+      "lessons:delete",
+      "mini-projects:create",
+      "mini-projects:publish",
+      "mini-projects:view",
+    ],
   admin: PERMISSIONS.map((p) => p.name), // Admin gets all permissions
   employer: [
   "dashboards:employer",

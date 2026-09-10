@@ -147,6 +147,47 @@ async function checkCodePlagiarism(payload) {
 
 
 // ---------------------------------------------------------------------
+// 5. Mini Project Plagiarism Detection
+// ---------------------------------------------------------------------
+async function checkMiniProjectPlagiarism({
+  submission,
+  comparisonSubmissions = [],
+}) {
+  const payload = {
+    submission: {
+      submission_id: String(submission.submission_id),
+      files: Array.isArray(submission.files)
+        ? submission.files.map((file) => ({
+            path: String(file.path),
+            language: String(file.language),
+            code: String(file.code || ""),
+          }))
+        : [],
+    },
+
+    comparison_submissions: Array.isArray(comparisonSubmissions)
+      ? comparisonSubmissions.map((comparison) => ({
+          submission_id: String(comparison.submission_id),
+          files: Array.isArray(comparison.files)
+            ? comparison.files.map((file) => ({
+                path: String(file.path),
+                language: String(file.language),
+                code: String(file.code || ""),
+              }))
+            : [],
+        }))
+      : [],
+  };
+
+  return callAIML(
+    "/api/plagiarism/mini-project/check",
+    payload,
+    "POST"
+  );
+}
+
+
+// ---------------------------------------------------------------------
 // 5. Descriptive Answer Evaluation (XLNet)
 // ---------------------------------------------------------------------
 async function evaluateDescriptiveAnswer({ questionText, studentAnswerText, referenceAnswerText }) {
@@ -187,6 +228,7 @@ module.exports = {
   getRecommendations,
   predictHiring,
   checkCodePlagiarism,
+  checkMiniProjectPlagiarism,
   evaluateDescriptiveAnswer,
   predictFraud,
   analyzeSentiment,
