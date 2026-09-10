@@ -79,11 +79,11 @@ async function finishQuiz(payload) {
 // ---------------------------------------------------------------------
 // Skill gap engine — /api/skill-gap/*
 // ---------------------------------------------------------------------
- 
+
 // { student_skills: [{skill_id, skill_level}], required_skills: [{skill_id, required_level, skill_name}] }
 // -> { result: { skill_gap, readiness_score, missing_skills } }
 
-async function analyzeSkillGap(payload){
+async function analyzeSkillGap(payload) {
   return callFlask("/api/skill-gap/analyze", payload)
 }
 
