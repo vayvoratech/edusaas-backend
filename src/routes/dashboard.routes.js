@@ -49,8 +49,9 @@ router.get(
   permissionRequired("dashboards:educator"),
   async (req, res, next) => {
     try {
+      const courseId = req.query.course_id || null;
       return res.json(
-        await repo.educatorInsights(req.user.sub)
+        await repo.educatorInsights(req.user.sub, courseId)
       );
     } catch (err) {
       next(err);

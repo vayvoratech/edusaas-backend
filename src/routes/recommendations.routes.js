@@ -18,8 +18,14 @@ const router = express.Router();
  */
 router.get("/", authRequired, async (req, res, next) => {
   try {
-    // Recommendations are intended for students.
+    // Recommendations are intended for students who completed the assessment.
     if (req.user.role !== "student") {
+      return res.json([]);
+    }
+
+    const profile = await repo.profiles.findByUserId(req.user.sub);
+    const completedSession = await repo.quizSessions.findCompletedByUser(req.user.sub);
+    if (!profile?.initial_assessment_completed && !completedSession) {
       return res.json([]);
     }
 
