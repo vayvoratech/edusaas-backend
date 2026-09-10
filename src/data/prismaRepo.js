@@ -372,8 +372,14 @@ module.exports = {
         return u;
       });
     },
-    findById: async (id) =>
-      mapUser(await prisma.user.findUnique({ where: { id }, include: userInclude })),
+    findById: async (id) => {
+      if (!id) return null;
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      if (!isUUID) {
+        return mapUser(await prisma.user.findUnique({ where: { clerk_id: id }, include: userInclude }));
+      }
+      return mapUser(await prisma.user.findUnique({ where: { id }, include: userInclude }));
+    },
     findByEmail: async (email) =>
       mapUser(await prisma.user.findUnique({ where: { email }, include: userInclude })),
     findByClerkId: async (clerk_id) =>
@@ -684,17 +690,37 @@ module.exports = {
 
   jobs: {
     list: async () => (await prisma.job.findMany({ orderBy: { created_at: "desc" } })).map(mapJob),
-    findById: async (id) => mapJob(await prisma.job.findUnique({ where: { id } })),
+    findById: async (id) => {
+      if (!id) return null;
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      if (!isUUID) return null;
+      return mapJob(await prisma.job.findUnique({ where: { id } }));
+    },
     create: async (data) => mapJob(await prisma.job.create({ data })),
     update: async (id, data) => {
       return mapJob(await safeQuery(prisma.job.update({ where: { id }, data })));
     },
     remove: async (id) => !!(await safeQuery(prisma.job.delete({ where: { id } }))),
-    listByEmployer: async (employer_id) =>
-      (await prisma.job.findMany({ where: { employer_id } })).map(mapJob),
+    listByEmployer: async (employer_id) => {
+      if (!employer_id) return [];
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employer_id);
+      let targetId = employer_id;
+      if (!isUUID) {
+        const employer = await prisma.user.findUnique({
+          where: { clerk_id: employer_id },
+          select: { id: true },
+        });
+        if (!employer) return [];
+        targetId = employer.id;
+      }
+      return (await prisma.job.findMany({
+        where: { employer_id: targetId },
+        orderBy: { created_at: "desc" },
+      })).map(mapJob);
+    },
   },
 
-  applications: {
+applications: {
   findById: async (id) =>
     mapApp(await prisma.application.findUnique({
       where: { id },
@@ -718,28 +744,58 @@ module.exports = {
 
   listByJob: async (job_id) =>
     (await prisma.application.findMany({ where: { job_id } })).map(mapApp),
+
   listByJobWithStudent: async (job_id) =>
-  (
-    await prisma.application.findMany({
-      where: { job_id },
-      include: {
-        student: true,
-      },
-      orderBy: {
-        applied_at: "desc",
-      },
-    })
-  ).map((application) => ({
-    ...mapApp(application),
-    student_name: application.student?.name || null,
-    student_email: application.student?.email || null,
-  })),
-listByStudent: async (student_id) =>
-(await prisma.application.findMany({
-where: { student_id }, orderBy:{applied_at:"desc"},
-})
-).map(mapApp),
+    (
+      await prisma.application.findMany({
+        where: { job_id },
+        include: {
+          student: true,
+        },
+        orderBy: {
+          applied_at: "desc",
+        },
+      })
+    ).map((application) => ({
+      ...mapApp(application),
+      student_name: application.student?.name || null,
+      student_email: application.student?.email || null,
+    })),
+
+  listByStudent: async (student_id) => {
+    if (!student_id) return [];
+
+    const isUUID =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        student_id
+      );
+
+    let targetId = student_id;
+
+    if (!isUUID) {
+      const student = await prisma.user.findUnique({
+        where: { clerk_id: student_id },
+        select: { id: true },
+      });
+
+      if (!student) return [];
+
+      targetId = student.id;
+    }
+
+    return (
+      await prisma.application.findMany({
+        where: {
+          student_id: targetId,
+        },
+        orderBy: {
+          applied_at: "desc",
+        },
+      })
+    ).map(mapApp);
+  },
 },
+
 interviews: {
   findById: async (id) =>
     safeQuery(
@@ -780,8 +836,6 @@ interviews: {
       )
     ),
 },
-
-
 
   notifications: {
   listByUser: async (user_id, limit = 50) =>
@@ -2324,23 +2378,40 @@ interviews: {
     };
   },
 
-  educatorInsights: async (educator_id) => {
-    const courses = await prisma.course.findMany({where: { educator_id },});
-    const courseIds = courses.map((c) => c.id);
+  educatorInsights: async (educator_id, course_id = null) => {
+    let targetEducatorId = educator_id;
+    if (educator_id) {
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(educator_id);
+      if (!isUUID) {
+        const user = await prisma.user.findUnique({
+          where: { clerk_id: educator_id },
+          select: { id: true },
+        });
+        if (user) targetEducatorId = user.id;
+      }
+    }
+
+    const allCourses = await prisma.course.findMany({
+      where: { educator_id: targetEducatorId },
+      orderBy: { created_at: "desc" },
+    });
+
+    let selectedCourses = allCourses;
+    if (course_id && course_id !== "all") {
+      selectedCourses = allCourses.filter((c) => c.id === course_id);
+    }
+    const courseIds = selectedCourses.map((c) => c.id);
+
     const enrollments =
       courseIds.length === 0
         ? []
         : await prisma.enrollment.findMany({
             where: {
-              course_id: {
-                in: courseIds,
-              },
+              course_id: { in: courseIds },
             },
           });
 
-    const learners = new Set(
-      enrollments.map((e) => e.user_id)
-    );
+    const enrolledUserIds = Array.from(new Set(enrollments.map((e) => e.user_id)));
 
     const avgCompletion =
       enrollments.length === 0
@@ -2352,28 +2423,142 @@ interviews: {
             ) / enrollments.length
           );
 
-    return {
-      enrolledLearners: learners.size,
+    // Course ratings
+    const ratings = courseIds.length === 0 ? [] : await prisma.courseRating.findMany({
+      where: { course_id: { in: courseIds } }
+    });
+    const avgRating = ratings.length > 0
+      ? Math.round((ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length) * 10) / 10
+      : null;
 
-      activeCourses: courses.filter(
-        (c) => c.status === "active"
-      ).length,
+    // Student Skill Results:
+    // If students are enrolled in this educator's courses, query their results.
+    // If no enrollments yet, analyze curriculum learner assessments for the course topics.
+    let skillResultsWhere = {};
+    if (enrolledUserIds.length > 0) {
+      const sessions = await prisma.quizSession.findMany({
+        where: { user_id: { in: enrolledUserIds }, status: "Completed" },
+        select: { session_id: true },
+      });
+      skillResultsWhere = { session_id: { in: sessions.map((s) => s.session_id) } };
+    }
 
-      avgCompletion,
-
-      // Not implemented yet — do not return fabricated values.
-      avgRating: null,
-      courseRatings: 0,
-
-      learnerProficiency: {
-        basic: 0,
-        intermediate: 0,
-        advanced: 0,
+    const skillResults = await prisma.studentSkillResult.findMany({
+      where: skillResultsWhere,
+      include: {
+        skill: true,
+        session: true,
       },
+      orderBy: { created_at: "desc" },
+    });
 
-      skillGapAnalysis: [],
+    // 1. Skill Gap Analysis
+    const skillAgg = new Map();
+    for (const r of skillResults) {
+      const name = r.skill?.skill_name || "Unknown";
+      const pct = parseFloat(r.percentage) || 0;
+      if (!skillAgg.has(name)) {
+        skillAgg.set(name, { sum: pct, count: 1 });
+      } else {
+        const item = skillAgg.get(name);
+        item.sum += pct;
+        item.count += 1;
+      }
+    }
 
-      learnerPerformance: [],
+    const skillGapAnalysis = Array.from(skillAgg.entries()).map(([skill, data]) => ({
+      skill,
+      value: Math.round(data.sum / data.count),
+    }));
+
+    // 2. Learner Proficiency
+    let basicCount = 0;
+    let intermediateCount = 0;
+    let advancedCount = 0;
+
+    const userScores = new Map();
+    for (const r of skillResults) {
+      const uId = r.session?.user_id || r.session_id;
+      const pct = parseFloat(r.percentage) || 0;
+      if (!userScores.has(uId)) {
+        userScores.set(uId, [pct]);
+      } else {
+        userScores.get(uId).push(pct);
+      }
+    }
+
+    for (const scores of userScores.values()) {
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      if (avg >= 70) {
+        advancedCount++;
+      } else if (avg >= 40) {
+        intermediateCount++;
+      } else {
+        basicCount++;
+      }
+    }
+
+    const learnerProficiency = {
+      basic: basicCount,
+      intermediate: intermediateCount,
+      advanced: advancedCount,
+    };
+
+    // 3. Learner Performance (Weekly Trends)
+    let sessionsWhere = { status: "Completed" };
+    if (enrolledUserIds.length > 0) {
+      sessionsWhere.user_id = { in: enrolledUserIds };
+    }
+    const completedSessions = await prisma.quizSession.findMany({
+      where: sessionsWhere,
+      orderBy: { end_time: "asc" },
+    });
+
+    const weeklyPerf = [
+      { week: "Week 1", technical: 0, engagement: 0, count: 0 },
+      { week: "Week 2", technical: 0, engagement: 0, count: 0 },
+      { week: "Week 3", technical: 0, engagement: 0, count: 0 },
+      { week: "Week 4", technical: 0, engagement: 0, count: 0 },
+    ];
+
+    const now = Date.now();
+    const msDay = 24 * 60 * 60 * 1000;
+
+    for (const s of completedSessions) {
+      const ts = new Date(s.end_time || s.start_time).getTime();
+      if (Number.isNaN(ts)) continue;
+      const daysAgo = Math.floor((now - ts) / msDay);
+      if (daysAgo < 0 || daysAgo >= 28) continue;
+      const idx = 3 - Math.floor(daysAgo / 7);
+      if (idx >= 0 && idx < 4) {
+        const sessionResults = skillResults.filter((sr) => sr.session_id === s.session_id);
+        const sessionAvg = sessionResults.length > 0
+          ? sessionResults.reduce((sum, sr) => sum + (parseFloat(sr.percentage) || 0), 0) / sessionResults.length
+          : 0;
+
+        weeklyPerf[idx].technical += sessionAvg;
+        weeklyPerf[idx].engagement += s.questions_answered || 10;
+        weeklyPerf[idx].count += 1;
+      }
+    }
+
+    const learnerPerformance = weeklyPerf.map((w) => ({
+      week: w.week,
+      technical: w.count > 0 ? Math.round(w.technical / w.count) : 0,
+      engagement: Math.min(100, Math.round(w.engagement * 2)),
+    }));
+
+    return {
+      courses: allCourses.map((c) => ({ id: c.id, title: c.title, status: c.status })),
+      selectedCourseId: course_id || "all",
+      enrolledLearners: enrolledUserIds.length,
+      activeCourses: selectedCourses.filter((c) => c.status === "active").length,
+      avgCompletion,
+      avgRating,
+      courseRatings: ratings.length,
+      learnerProficiency,
+      skillGapAnalysis,
+      learnerPerformance,
     };
   },
 

@@ -11,7 +11,9 @@ const CODING_TEST_CONCURRENCY = Math.max(
 );
 
 function getCodingDurationSeconds() {
-  const minutes = Number(process.env.INITIAL_CODING_ASSESSMENT_DURATION_MINUTES);
+  const minutes = Number(
+    process.env.INITIAL_CODING_ASSESSMENT_DURATION_MINUTES || 45
+  );
   if (!Number.isFinite(minutes) || minutes <= 0) {
     throw new Error("INITIAL_CODING_ASSESSMENT_DURATION_MINUTES is not configured correctly");
   }
