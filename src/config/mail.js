@@ -4,8 +4,6 @@ const { smtpUser, smtpPass, smtpFrom } = require("./env");
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
     user: smtpUser,
     pass: smtpPass,
   },
@@ -19,8 +17,8 @@ const sendOtpEmail = async (email, otp) => {
     const formattedOtp = `${otp.slice(0, 3)} ${otp.slice(3)}`;
 
     await transporter.sendMail({
-      from: `"Vayvora EduTech" <${process.env.SMTP_FROM}>`,
-      from: `"Vayvora EduTech" <${smtpFrom}>`,
+
+      from: smtpFrom,
       to: email,
       subject: "Password Reset OTP",
 
@@ -215,7 +213,39 @@ const sendOtpEmail = async (email, otp) => {
   }
 };
 
+
+const sendEmail = async ({
+  to,
+  subject,
+  text,
+  html,
+}) => {
+  try {
+    console.log("[mail] sending email to", to);
+
+    const result = await transporter.sendMail({
+      from: smtpFrom,
+      to,
+      subject,
+      text,
+      html,
+    });
+
+    console.log("[mail] email sent:", result.messageId);
+
+    return result;
+  } catch (err) {
+    console.error(
+      "[mail error] sendEmail failed:",
+      err && err.stack ? err.stack : err
+    );
+    throw err;
+  }
+};
+
+
 module.exports = {
   transporter,
   sendOtpEmail,
+  sendEmail
 };
