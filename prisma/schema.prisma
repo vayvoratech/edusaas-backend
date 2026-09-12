@@ -168,11 +168,14 @@ model CourseRating {
   user_id    String   @db.Uuid
   course_id  String   @db.Uuid
   rating     Float
+  review     String?
   created_at DateTime @default(now()) @db.Timestamp(6)
   updated_at DateTime @default(now()) @db.Timestamp(6)
   course     Course   @relation(fields: [course_id], references: [id])
   user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
+  @@unique([user_id, course_id])
+  @@index([course_id])
   @@map("course_ratings")
   @@schema("education")
 }
@@ -317,8 +320,20 @@ model Job {
   employer_id              String   @db.Uuid
   title                    String   @db.VarChar(255)
   description              String?
+  responsibilities         String?
   requirements             String?
   required_skills          String[]
+  preferred_skills         String[] @default([])
+  qualification            String?  @db.VarChar(255)
+  eligible_branches        String[] @default([])
+  employment_type          String?  @db.VarChar(100)
+  work_mode                String?  @db.VarChar(100)
+  location                 String?  @db.VarChar(255)
+  salary                   String?  @db.VarChar(100)
+  application_deadline     String?  @db.VarChar(100)
+  require_video            Boolean? @default(false)
+  video_max_duration       Int?     @default(60)
+  video_prompt             String?
   status                   String   @default("open") @db.VarChar(50)
   created_at               DateTime @default(now()) @db.Timestamp(6)
   domain_role_id           String?  @db.Uuid

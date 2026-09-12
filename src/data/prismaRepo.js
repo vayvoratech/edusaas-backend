@@ -252,7 +252,19 @@ const mapCert = (c) => c && { ...c, issued_date: iso(c.issued_date) };
 const mapAch = (a) => a && { ...a, earned_at: iso(a.earned_at) };
 const mapTask = (t) => t && { ...t, due_date: iso(t.due_date), created_at: iso(t.created_at) };
 const mapRec = (r) => r && { ...r, created_at: iso(r.created_at) };
-const mapAnn = (a) => a && { ...a, scheduled_at: iso(a.scheduled_at), created_at: iso(a.created_at) };
+const mapAnn = (a) =>
+  a && {
+    ...a,
+    scheduled_at: iso(a.scheduled_at),
+    created_at: iso(a.created_at),
+    educator: a.educator
+      ? {
+          id: a.educator.id,
+          name: a.educator.name,
+          email: a.educator.email,
+        }
+      : undefined,
+  };
 
 
 module.exports = {
@@ -658,15 +670,260 @@ module.exports = {
           { description: { contains: filters.search, mode: 'insensitive' } }
         ];
       }
-      return (await prisma.course.findMany({ where, orderBy: { created_at: "desc" } })).map(mapCourse);
+      const rawCourses = await prisma.course.findMany({
+        where,
+        include: {
+          courseRatings: {
+            select: { rating: true },
+          },
+        },
+        orderBy: { created_at: "desc" },
+      });
+      return rawCourses.map((c) => {
+        const ratings = c.courseRatings || [];
+        const count = ratings.length;
+        const avg =
+          count > 0
+            ? Math.round(
+                (ratings.reduce((sum, r) => sum + r.rating, 0) / count) * 10
+              ) / 10
+            : null;
+        const mapped = mapCourse(c);
+        delete mapped.courseRatings;
+        return {
+          ...mapped,
+          rating: avg,
+          rating_count: count,
+          avgRating: avg,
+        };
+      });
     },
-    findById: async (id) => mapCourse(await prisma.course.findUnique({ where: { id } })),
+    findById: async (id) => {
+      const c = await prisma.course.findUnique({
+        where: { id },
+        include: {
+          courseRatings: {
+            select: { rating: true },
+          },
+        },
+      });
+      if (!c) return null;
+      const ratings = c.courseRatings || [];
+      const count = ratings.length;
+      const avg =
+        count > 0
+          ? Math.round(
+              (ratings.reduce((sum, r) => sum + r.rating, 0) / count) * 10
+            ) / 10
+          : null;
+      const mapped = mapCourse(c);
+      delete mapped.courseRatings;
+      return {
+        ...mapped,
+        rating: avg,
+        rating_count: count,
+        avgRating: avg,
+      };
+    },
     create: async (data) => mapCourse(await prisma.course.create({ data })),
     update: async (id, data) => {
       return mapCourse(await safeQuery(prisma.course.update({ where: { id }, data })));
     },
     remove: async (id) => !!(await safeQuery(prisma.course.delete({ where: { id } }))),
     enrollmentCount: async (id) => prisma.enrollment.count({ where: { course_id: id } }),
+  },
+
+  courseRatings: {
+    upsert: async ({ user_id, course_id, rating, review }) => {
+      return await prisma.courseRating.upsert({
+        where: {
+          user_id_course_id: { user_id, course_id },
+        },
+        create: {
+          user_id,
+          course_id,
+          rating: Number(rating),
+          review: review !== undefined && review !== null ? String(review).trim() : null,
+        },
+        update: {
+          rating: Number(rating),
+          review: review !== undefined && review !== null ? String(review).trim() : null,
+          updated_at: new Date(),
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              profile: {
+                select: { preferences: true },
+              },
+            },
+          },
+        },
+      });
+    },
+
+    getForUser: async (user_id, course_id) => {
+      return await prisma.courseRating.findUnique({
+        where: {
+          user_id_course_id: { user_id, course_id },
+        },
+      });
+    },
+
+    listByCourse: async (course_id) => {
+      const ratings = await prisma.courseRating.findMany({
+        where: { course_id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              profile: {
+                select: { preferences: true },
+              },
+            },
+          },
+        },
+        orderBy: { created_at: "desc" },
+      });
+
+      const count = ratings.length;
+      const avg =
+        count > 0
+          ? Math.round(
+              (ratings.reduce((sum, r) => sum + r.rating, 0) / count) * 10
+            ) / 10
+          : 0;
+
+      const distribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+      ratings.forEach((r) => {
+        const star = Math.min(5, Math.max(1, Math.round(r.rating)));
+        distribution[star] = (distribution[star] || 0) + 1;
+      });
+
+      return {
+        course_id,
+        average_rating: avg,
+        total_reviews: count,
+        distribution,
+        reviews: ratings.map((r) => ({
+          id: r.id,
+          user_id: r.user_id,
+          course_id: r.course_id,
+          rating: r.rating,
+          review: r.review,
+          created_at: iso(r.created_at),
+          user_name: r.user?.name || r.user?.username || "Student",
+          avatar_url: r.user?.profile?.preferences?.avatar_url || null,
+        })),
+      };
+    },
+
+    listByEducator: async (educator_id) => {
+      const courses = await prisma.course.findMany({
+        where: { educator_id },
+        select: { id: true, title: true, category: true, difficulty: true, thumbnail_url: true },
+      });
+
+      if (courses.length === 0) {
+        return {
+          total_reviews: 0,
+          average_rating: 0,
+          course_breakdown: [],
+          recent_reviews: [],
+        };
+      }
+
+      const courseMap = {};
+      courses.forEach((c) => { courseMap[c.id] = c; });
+      const courseIds = courses.map((c) => c.id);
+
+      const ratings = await prisma.courseRating.findMany({
+        where: { course_id: { in: courseIds } },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              username: true,
+              profile: {
+                select: { preferences: true },
+              },
+            },
+          },
+        },
+        orderBy: { created_at: "desc" },
+      });
+
+      const totalReviews = ratings.length;
+      const avgRating =
+        totalReviews > 0
+          ? Math.round(
+              (ratings.reduce((sum, r) => sum + r.rating, 0) / totalReviews) * 10
+            ) / 10
+          : 0;
+
+      const perCourse = {};
+      courses.forEach((c) => {
+        perCourse[c.id] = {
+          course_id: c.id,
+          title: c.title,
+          category: c.category,
+          thumbnail_url: c.thumbnail_url,
+          reviews_count: 0,
+          total_rating: 0,
+          average_rating: 0,
+          reviews: [],
+        };
+      });
+
+      ratings.forEach((r) => {
+        if (perCourse[r.course_id]) {
+          perCourse[r.course_id].reviews_count += 1;
+          perCourse[r.course_id].total_rating += r.rating;
+          perCourse[r.course_id].reviews.push({
+            id: r.id,
+            user_id: r.user_id,
+            rating: r.rating,
+            review: r.review,
+            created_at: iso(r.created_at),
+            user_name: r.user?.name || r.user?.username || "Student",
+            avatar_url: r.user?.profile?.preferences?.avatar_url || null,
+          });
+        }
+      });
+
+      const course_breakdown = Object.values(perCourse).map((cp) => ({
+        ...cp,
+        average_rating:
+          cp.reviews_count > 0
+            ? Math.round((cp.total_rating / cp.reviews_count) * 10) / 10
+            : 0,
+      }));
+
+      const recent_reviews = ratings.slice(0, 20).map((r) => ({
+        id: r.id,
+        user_id: r.user_id,
+        course_id: r.course_id,
+        course_title: courseMap[r.course_id]?.title || "Course",
+        rating: r.rating,
+        review: r.review,
+        created_at: iso(r.created_at),
+        user_name: r.user?.name || r.user?.username || "Student",
+        avatar_url: r.user?.profile?.preferences?.avatar_url || null,
+      }));
+
+      return {
+        total_reviews: totalReviews,
+        average_rating: avgRating,
+        course_breakdown,
+        recent_reviews,
+      };
+    },
   },
 
   enrollments: {
@@ -681,22 +938,121 @@ module.exports = {
         data
       })),
     listByUser: async (user_id) =>
-      (await prisma.enrollment.findMany({ where: { user_id } })).map(mapEnrollment),
+      (
+        await prisma.enrollment.findMany({
+          where: { user_id },
+          include: { course: true },
+        })
+      ).map(mapEnrollment),
     listByCourse: async (course_id) =>
-      (await prisma.enrollment.findMany({ where: { course_id } })).map(mapEnrollment),
+      (
+        await prisma.enrollment.findMany({
+          where: { course_id },
+          include: { user: true },
+        })
+      ).map(mapEnrollment),
   },
 
   jobs: {
-    list: async () => (await prisma.job.findMany({ orderBy: { created_at: "desc" } })).map(mapJob),
+    list: async () => {
+      try {
+        const rows = await prisma.$queryRawUnsafe(`
+          SELECT * FROM education.jobs ORDER BY created_at DESC
+        `);
+        return rows.map(mapJob);
+      } catch {
+        return (await prisma.job.findMany({ orderBy: { created_at: "desc" } })).map(mapJob);
+      }
+    },
     findById: async (id) => {
       if (!id) return null;
       const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
       if (!isUUID) return null;
-      return mapJob(await prisma.job.findUnique({ where: { id } }));
+      try {
+        const rows = await prisma.$queryRawUnsafe(`
+          SELECT * FROM education.jobs WHERE id = $1::uuid
+        `, id);
+        return mapJob(rows[0] || null);
+      } catch {
+        return mapJob(await prisma.job.findUnique({ where: { id } }));
+      }
     },
-    create: async (data) => mapJob(await prisma.job.create({ data })),
+    create: async (data) => {
+      try {
+        return mapJob(await prisma.job.create({ data }));
+      } catch (err) {
+        if (err.message && err.message.includes("Unknown argument")) {
+          const cols = [];
+          const placeholders = [];
+          const values = [];
+          let idx = 1;
+
+          for (const [k, v] of Object.entries(data)) {
+            cols.push(`"${k}"`);
+            if (k === 'employer_id' || k === 'domain_role_id') {
+              placeholders.push(`$${idx}::uuid`);
+            } else if (k === 'required_skills' || k === 'preferred_skills' || k === 'eligible_branches') {
+              placeholders.push(`$${idx}::text[]`);
+            } else if (k === 'require_video') {
+              placeholders.push(`$${idx}::boolean`);
+            } else if (k === 'video_max_duration') {
+              placeholders.push(`$${idx}::integer`);
+            } else {
+              placeholders.push(`$${idx}`);
+            }
+            values.push(v);
+            idx++;
+          }
+
+          const sql = `
+            INSERT INTO education.jobs (${cols.join(', ')})
+            VALUES (${placeholders.join(', ')})
+            RETURNING *
+          `;
+          const rows = await prisma.$queryRawUnsafe(sql, ...values);
+          return mapJob(rows[0]);
+        }
+        throw err;
+      }
+    },
     update: async (id, data) => {
-      return mapJob(await safeQuery(prisma.job.update({ where: { id }, data })));
+      try {
+        return mapJob(await safeQuery(prisma.job.update({ where: { id }, data })));
+      } catch (err) {
+        if (err.message && err.message.includes("Unknown argument")) {
+          const setClauses = [];
+          const values = [];
+          let idx = 1;
+
+          for (const [k, v] of Object.entries(data)) {
+            if (k === 'id') continue;
+            let placeholder = `$${idx}`;
+            if (k === 'employer_id' || k === 'domain_role_id') {
+              placeholder += '::uuid';
+            } else if (k === 'required_skills' || k === 'preferred_skills' || k === 'eligible_branches') {
+              placeholder += '::text[]';
+            } else if (k === 'require_video') {
+              placeholder += '::boolean';
+            } else if (k === 'video_max_duration') {
+              placeholder += '::integer';
+            }
+            setClauses.push(`"${k}" = ${placeholder}`);
+            values.push(v);
+            idx++;
+          }
+
+          values.push(id);
+          const sql = `
+            UPDATE education.jobs
+            SET ${setClauses.join(', ')}
+            WHERE id = $${idx}::uuid
+            RETURNING *
+          `;
+          const rows = await prisma.$queryRawUnsafe(sql, ...values);
+          return mapJob(rows[0]);
+        }
+        throw err;
+      }
     },
     remove: async (id) => !!(await safeQuery(prisma.job.delete({ where: { id } }))),
     listByEmployer: async (employer_id) => {
@@ -711,10 +1067,17 @@ module.exports = {
         if (!employer) return [];
         targetId = employer.id;
       }
-      return (await prisma.job.findMany({
-        where: { employer_id: targetId },
-        orderBy: { created_at: "desc" },
-      })).map(mapJob);
+      try {
+        const rows = await prisma.$queryRawUnsafe(`
+          SELECT * FROM education.jobs WHERE employer_id = $1::uuid ORDER BY created_at DESC
+        `, targetId);
+        return rows.map(mapJob);
+      } catch {
+        return (await prisma.job.findMany({
+          where: { employer_id: targetId },
+          orderBy: { created_at: "desc" },
+        })).map(mapJob);
+      }
     },
   },
 
@@ -995,12 +1358,39 @@ module.exports = {
 
   announcements: {
     list: async () =>
-      (await prisma.announcement.findMany({ orderBy: { created_at: "desc" } })).map(mapAnn),
+      (
+        await prisma.announcement.findMany({
+          orderBy: { created_at: "desc" },
+          include: {
+            educator: {
+              select: { id: true, name: true, email: true },
+            },
+          },
+        })
+      ).map(mapAnn),
     listByEducator: async (educator_id) =>
-      (await prisma.announcement.findMany({
-        where: { educator_id }, orderBy: { created_at: "desc" },
-      })).map(mapAnn),
-    create: async (data) => mapAnn(await prisma.announcement.create({ data })),
+      (
+        await prisma.announcement.findMany({
+          where: { educator_id },
+          orderBy: { created_at: "desc" },
+          include: {
+            educator: {
+              select: { id: true, name: true, email: true },
+            },
+          },
+        })
+      ).map(mapAnn),
+    create: async (data) =>
+      mapAnn(
+        await prisma.announcement.create({
+          data,
+          include: {
+            educator: {
+              select: { id: true, name: true, email: true },
+            },
+          },
+        })
+      ),
   },
 
   domainRoles: {
@@ -2331,7 +2721,20 @@ module.exports = {
 
     // Course ratings
     const ratings = courseIds.length === 0 ? [] : await prisma.courseRating.findMany({
-      where: { course_id: { in: courseIds } }
+      where: { course_id: { in: courseIds } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            profile: {
+              select: { preferences: true },
+            },
+          },
+        },
+      },
+      orderBy: { created_at: "desc" },
     });
     const avgRating = ratings.length > 0
       ? Math.round((ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length) * 10) / 10
@@ -2454,6 +2857,18 @@ module.exports = {
       engagement: Math.min(100, Math.round(w.engagement * 2)),
     }));
 
+    // Upcoming pending tasks for educator and educator's courses
+    let taskConditions = [];
+    if (targetEducatorId) {
+      taskConditions.push({ user_id: targetEducatorId, status: "pending" });
+    }
+    if (courseIds.length > 0) {
+      taskConditions.push({ course_id: { in: courseIds }, status: "pending" });
+    }
+    const upcomingTasksCount = taskConditions.length > 0
+      ? await prisma.task.count({ where: { OR: taskConditions } })
+      : 0;
+
     return {
       courses: allCourses.map((c) => ({ id: c.id, title: c.title, status: c.status })),
       selectedCourseId: course_id || "all",
@@ -2462,6 +2877,17 @@ module.exports = {
       avgCompletion,
       avgRating,
       courseRatings: ratings.length,
+      upcomingTasks: upcomingTasksCount,
+      recentFeedbacks: ratings.slice(0, 10).map((r) => ({
+        id: r.id,
+        rating: r.rating,
+        review: r.review,
+        created_at: iso(r.created_at),
+        course_id: r.course_id,
+        course_title: allCourses.find((c) => c.id === r.course_id)?.title || "Course",
+        user_name: r.user?.name || r.user?.username || "Student",
+        avatar_url: r.user?.profile?.preferences?.avatar_url || null,
+      })),
       learnerProficiency,
       skillGapAnalysis,
       learnerPerformance,

@@ -98,6 +98,18 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/rbac", rbacRoutes);
 app.use("/api/community", communityRoutes);
 
+const repo = require("./src/data");
+const { authRequired } = require("./src/middleware/auth");
+
+app.get("/api/me/assignments", authRequired, async (req, res, next) => {
+  try {
+    const enrollments = await repo.enrollments.listByUser(req.user.sub);
+    return res.json(enrollments || []);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Middleware to handle 404 Not Found errors
 app.use(notFound);
 // Centralized error handler

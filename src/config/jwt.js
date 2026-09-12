@@ -10,7 +10,6 @@ const {
 function buildPayload(user) {
   return {
     sub: user.id,
-    clerk_id: user.clerk_id || null,
     role: user.role,
     permissions: user.permissions || [],
   };

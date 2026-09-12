@@ -5,7 +5,7 @@ const crypto = require('crypto')
 const repo = require("../data");
 const { sendOtpEmail } = require("../config/mail");
 const router = express.Router();
-const {authRequired} = require('../middleware/auth')
+const { authRequired } = require('../middleware/auth')
 
 const { refreshJwtSecret } = require("../config/env");
 const {
@@ -179,16 +179,16 @@ router.post("/login", async (req, res, next) => {
         error: "email and password are required",
       });
     }
-  // find user
-   const user = await repo.users.findByEmail(
-  email.trim().toLowerCase()
-);
+    // find user
+    const user = await repo.users.findByEmail(
+      email.trim().toLowerCase()
+    );
 
-if (!user) {
-  return res.status(401).json({
-    error: "invalid credentials",
-  });
-}
+    if (!user) {
+      return res.status(401).json({
+        error: "invalid credentials",
+      });
+    }
 
 
     // Verify Password
@@ -235,7 +235,7 @@ if (!user) {
       token_hash,
       expires_at: new Date(decodedRefreshToken.exp * 1000),
     })
-    
+
     // Success Response
     return res.status(200).json({
       accessToken,
@@ -514,7 +514,7 @@ router.post("/verify-otp", async (req, res, next) => {
     // Step 6: REPLACED BCRYPT WITH SHA-256 COMPARE
     // Convert the incoming string to a SHA-256 hex string
     const incomingHash = crypto.createHash('sha256').update(otp.trim()).digest('hex');
-    
+
     // Compare directly with database record string
     const isValid = (incomingHash === otpRecord.otp_hash);
 

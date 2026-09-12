@@ -308,25 +308,39 @@ router.post(
         });
       }
 
-    const job = await repo.jobs.create({
-  employer_id: req.user.sub,
-  title,
-  description: description || null,
-  responsibilities: responsibilities || null,
-  required_skills: required_skills || [],
-  preferred_skills: preferred_skills || [],
-  qualification: qualification || null,
-  eligible_branches: eligible_branches || [],
-  employment_type: employment_type || null,
-  work_mode: work_mode || null,
-  location: location || null,
-  salary: salary || null,
-  application_deadline: application_deadline || null,
-  status: status || "open",
-  require_video,
-  video_max_duration,
-  video_prompt,
-});
+      let domain_role_id = req.body.domain_role_id || null;
+      if (!domain_role_id && title) {
+        try {
+          const matchedDomain = await repo.prisma.domainRole.findFirst({
+            where: { domain_name: { equals: title, mode: "insensitive" } },
+            select: { domain_role_id: true }
+          });
+          if (matchedDomain) {
+            domain_role_id = matchedDomain.domain_role_id;
+          }
+        } catch {}
+      }
+
+      const job = await repo.jobs.create({
+        employer_id: req.user.sub,
+        title,
+        description: description || null,
+        responsibilities: responsibilities || null,
+        required_skills: required_skills || [],
+        preferred_skills: preferred_skills || [],
+        qualification: qualification || null,
+        eligible_branches: eligible_branches || [],
+        employment_type: employment_type || null,
+        work_mode: work_mode || null,
+        location: location || null,
+        salary: salary || null,
+        application_deadline: application_deadline || null,
+        status: status || "open",
+        require_video: Boolean(require_video),
+        video_max_duration: video_max_duration ? Number(video_max_duration) : 60,
+        video_prompt: video_prompt || null,
+        domain_role_id: domain_role_id || null,
+      });
 
       return res.status(201).json(job);
 
