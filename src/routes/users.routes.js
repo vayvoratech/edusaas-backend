@@ -273,40 +273,34 @@ router.get("/me", authRequired, async (req, res, next) => {
  */
 router.get("/:id", authRequired, async (req, res, next) => {
   try {
-    const targetUserId = req.params.id === "me" ? req.user.sub : req.params.id;
+const targetUserId = req.params.id === "me" ? req.user.sub : req.params.id;
 
-    // Only the owner or admin can view a profile
-    if (
-      req.user.sub !== targetUserId &&
-      req.user.role !== "admin"
-    ) {
-      return res.status(403).json({
-        error: "Cannot view another user's profile.",
-      });
-    }
+const isOwner = req.user.sub === targetUserId;
+const isAdmin =
+  req.user.role === "admin" ||
+  req.user.role === "super_admin";
 
 let isAuthorizedEmployer = false;
 
-if (req.user.role === "employer") {
+if (req.user.role === "employer" && !isOwner) {
   const employerJobs = await repo.jobs.list({
     employer_id: req.user.sub,
   });
 
- const candidate = await repo.users.findById(targetUserId);
+  const candidate = await repo.users.findById(targetUserId);
 
-if (candidate?.role === "student") {
-  const candidateApplications = await repo.applications.listByStudent(
-    candidate.id
-  );
+  if (candidate?.role === "student") {
+    const candidateApplications =
+      await repo.applications.listByStudent(candidate.id);
 
-  isAuthorizedEmployer = candidateApplications.some((application) =>
-    employerJobs.some(
-      (job) =>
-        String(job.id) === String(application.job_id) &&
-        String(job.employer_id) === String(req.user.sub)
-    )
-  );
-}
+    isAuthorizedEmployer = candidateApplications.some((application) =>
+      employerJobs.some(
+        (job) =>
+          String(job.id) === String(application.job_id) &&
+          String(job.employer_id) === String(req.user.sub)
+      )
+    );
+  }
 }
 
 if (!isOwner && !isAdmin && !isAuthorizedEmployer) {
@@ -344,15 +338,18 @@ const user = await repo.users.findById(targetUserId);
  */
 router.put("/:id/profile", authRequired, async (req, res, next) => {
   try {
-    const targetUserId = req.params.id === "me" ? req.user.sub : req.params.id;
+    const targetUserId =
+      req.params.id === "me" ? req.user.sub : req.params.id;
 
-    // Only owner or admin
-    if (
-      req.user.sub !== targetUserId &&
-      req.user.role !== "admin"
-    ) {
+    // Only the owner or admin can update a profile
+    const isOwner = req.user.sub === targetUserId;
+    const isAdmin =
+      req.user.role === "admin" ||
+      req.user.role === "super_admin";
+
+    if (!isOwner && !isAdmin) {
       return res.status(403).json({
-        error: "Cannot edit another user's profile.",
+        error: "Cannot update another user's profile.",
       });
     }
 
@@ -377,11 +374,11 @@ router.put("/:id/profile", authRequired, async (req, res, next) => {
     );
 
     return res.json(profile);
-
-  } catch (err) {
-    next(err);
+        } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 
 router.post(
@@ -464,5 +461,6 @@ router.get("/students/candidates", authRequired, roleRequired("educator", "emplo
   }
 }
 );
+
 
 module.exports = router;

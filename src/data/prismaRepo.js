@@ -1083,27 +1083,113 @@ module.exports = {
   },
 
   applications: {
-    findOne: async (job_id, student_id) =>
-      mapApp(await prisma.application.findUnique({
+  findOne: async (job_id, student_id) =>
+    mapApp(
+      await prisma.application.findUnique({
         where: { job_id_student_id: { job_id, student_id } },
+
       })),
-    create: async (data) => mapApp(await prisma.application.create({ data })),
+    create: async (data) =>
+      mapApp(await prisma.application.create({ data })),
+
     listByJob: async (job_id) =>
       (await prisma.application.findMany({ where: { job_id } })).map(mapApp),
+
+    listByJobWithStudent: async (job_id) =>
+      (
+        await prisma.application.findMany({
+          where: { job_id },
+          include: {
+            student: true,
+          },
+          orderBy: {
+            applied_at: "desc",
+          },
+        })
+      ).map((application) => ({
+        ...mapApp(application),
+        student_name: application.student?.name || null,
+        student_email: application.student?.email || null,
+      })),
+
     listByStudent: async (student_id) => {
       if (!student_id) return [];
-      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(student_id);
+
+      const isUUID =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          student_id
+        );
+
       let targetId = student_id;
+
       if (!isUUID) {
         const student = await prisma.user.findUnique({
           where: { clerk_id: student_id },
           select: { id: true },
         });
+
         if (!student) return [];
+
         targetId = student.id;
       }
-      return (await prisma.application.findMany({ where: { student_id: targetId } })).map(mapApp);
+
+      return (
+        await prisma.application.findMany({
+          where: { student_id: targetId },
+        })
+      ).map(mapApp);
     },
+
+    update: async (id, data) =>
+      mapApp(
+        await safeQuery(
+          prisma.application.update({
+            where: { id },
+            data,
+          })
+        )
+      ),
+  },
+
+  interviews: {
+    findById: async (id) =>
+      safeQuery(
+        prisma.interview.findUnique({
+          where: { id },
+        })
+      ),
+
+    findByApplication: async (application_id) =>
+      safeQuery(
+        prisma.interview.findFirst({
+          where: { application_id },
+          orderBy: { scheduled_at: "desc" },
+        })
+      ),
+
+    create: async (data) =>
+      safeQuery(
+        prisma.interview.create({
+          data,
+        })
+      ),
+
+    update: async (id, data) =>
+      safeQuery(
+        prisma.interview.update({
+          where: { id },
+          data,
+        })
+      ),
+
+    remove: async (id) =>
+      !!(
+        await safeQuery(
+          prisma.interview.delete({
+            where: { id },
+          })
+        )
+      ),
   },
 
   notifications: {
@@ -3100,11 +3186,9 @@ const skillsInsights = Array.from(
 
   const topMatches = strong;
 
-// ===============================
+
 // SKILL INSIGHTS
-// ===============================
-  
-  return {
+return {
     jobOpenings: jobs.filter(
       (job) => job.status === "open"
     ).length,
@@ -3336,11 +3420,7 @@ const skillsInsights = Array.from(
     ]
       .sort((a, b) => new Date(b.when) - new Date(a.when))
       .slice(0, 5);
-
-      // =========================================
       // Learning Analytics
-      // =========================================
-
       const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
       // Student joined date

@@ -289,20 +289,161 @@ async function startInitialAssessment(userId) {
       }
     }
 
-    /*
+        /*
      * ----------------------------------------------------------
      * CURRENT QUESTION MUST EXIST
      * ----------------------------------------------------------
      */
+
     /*
- * ----------------------------------------------------------
- * RECOVER CURRENT QUESTION IF MISSING
- * ----------------------------------------------------------
- *
- * Older/incomplete sessions may not have current_question_id.
- * Recover the question from the persisted adaptive quiz state
- * instead of failing the entire assessment.
- */
+     * ----------------------------------------------------------
+     * RECOVER MISSING CURRENT QUESTION
+     * ----------------------------------------------------------
+     *
+     * A paused session can occasionally exist without a
+     * current_question_id if assessment initialization was
+     * interrupted after the session was created.
+     *
+     * Recover only when no question has been answered yet.
+     */
+
+    if (
+      !existingSession.current_question_id &&
+      existingSession.status === "Paused" &&
+      Number(existingSession.questions_answered || 0) === 0
+    ) {
+      console.log(
+        "Recovering assessment session:",
+        existingSession.session_id
+      );
+
+      const recoverySkill =
+        requiredSkills.find(
+          (rs) =>
+            rs.skill_id === existingSession.current_skill_id
+        ) || requiredSkills[0];
+
+      if (!recoverySkill) {
+        const error = new Error(
+          "Unable to recover assessment because no skill is available."
+        );
+
+        error.status = 500;
+        throw error;
+      }
+
+      /*
+       * Get questions for the current skill.
+       */
+      const recoveryQuestions =
+        await repo.questions.findBySkill(
+          recoverySkill.skill_id
+        );
+
+      if (!recoveryQuestions?.length) {
+        const error = new Error(
+          "No questions are available for the current assessment skill."
+        );
+
+        error.status = 404;
+        throw error;
+      }
+
+      /*
+       * Recreate the missing adaptive quiz state.
+       */
+      const recoveryStateResponse =
+        await flaskService.createQuizState({
+          session_id:
+            existingSession.session_id,
+
+          skill: {
+            skill_id:
+              recoverySkill.skill_id,
+
+            skill_name:
+              recoverySkill.skill.skill_name,
+          },
+        });
+
+      const recoveryState =
+        recoveryStateResponse.state;
+
+      /*
+       * Persist the recovered quiz state.
+       */
+      await repo.quizStates.create({
+        session_id:
+          existingSession.session_id,
+
+        skill_id:
+          recoverySkill.skill_id,
+
+        current_difficulty:
+          recoveryState.current_difficulty,
+
+        correct_streak:
+          recoveryState.correct_streak,
+
+        wrong_streak:
+          recoveryState.wrong_streak,
+
+        questions_answered:
+          recoveryState.questions_answered,
+
+        obtained_score:
+          recoveryState.obtained_score,
+
+        maximum_score:
+          recoveryState.maximum_score,
+
+        state:
+          recoveryState,
+      });
+
+      /*
+       * Ask the adaptive engine for the first question.
+       */
+      const recoveryQuestionResponse =
+        await flaskService.getNextQuestion({
+          state: recoveryState,
+          questions: recoveryQuestions,
+        });
+
+      if (!recoveryQuestionResponse?.question) {
+        const error = new Error(
+          "No question is available for the current assessment skill."
+        );
+
+        error.status = 500;
+        throw error;
+      }
+
+      /*
+       * Save the recovered current question.
+       */
+      await repo.quizSessions.update(
+        existingSession.session_id,
+        {
+          current_skill_id:
+            recoverySkill.skill_id,
+
+          current_question_id:
+            recoveryQuestionResponse.question.question_id,
+        }
+      );
+
+      /*
+       * Keep the in-memory session consistent for the
+       * remainder of this resume request.
+       */
+      existingSession.current_skill_id =
+        recoverySkill.skill_id;
+
+      existingSession.current_question_id =
+        recoveryQuestionResponse.question.question_id;
+    }
+
     let currentQuestion = null;
 
     if (existingSession.current_question_id) {

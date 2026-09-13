@@ -10,6 +10,8 @@ const aimlClient = require("../services/aimlClient");
 
 
 
+
+
 const router = express.Router();
 
 // --------------------------------------------------
@@ -309,12 +311,21 @@ router.post(
       }
 
       let domain_role_id = req.body.domain_role_id || null;
+
       if (!domain_role_id && title) {
         try {
           const matchedDomain = await repo.prisma.domainRole.findFirst({
-            where: { domain_name: { equals: title, mode: "insensitive" } },
-            select: { domain_role_id: true }
+            where: {
+              domain_name: {
+                equals: title,
+                mode: "insensitive",
+              },
+            },
+            select: {
+              domain_role_id: true,
+            },
           });
+
           if (matchedDomain) {
             domain_role_id = matchedDomain.domain_role_id;
           }
@@ -337,7 +348,9 @@ router.post(
         application_deadline: application_deadline || null,
         status: status || "open",
         require_video: Boolean(require_video),
-        video_max_duration: video_max_duration ? Number(video_max_duration) : 60,
+        video_max_duration: video_max_duration
+          ? Number(video_max_duration)
+          : 60,
         video_prompt: video_prompt || null,
         domain_role_id: domain_role_id || null,
       });
@@ -575,8 +588,6 @@ const unappliedDomainStudents = domainStudents.filter(
   (student) =>
     !appliedStudentIds.has(String(student.id))
 );
-
-
 console.log(
   "ALL STUDENTS:",
   students.map((s) => ({
@@ -1001,7 +1012,6 @@ const allowed = [
   "video_prompt",
 ];
 
-
       const data = {};
 
       for (const key of allowed) {
@@ -1365,6 +1375,8 @@ router.get(
 router.get(
   "/:jobId/applications/:applicationId/video",
   authRequired,
+  permissionRequired("jobs:view-applications"),
+
   async (req, res, next) => {
     try {
       const { jobId, applicationId } = req.params;
@@ -1598,8 +1610,6 @@ router.post(
       });
 
 
-
-        // Send interview invitation email to the student
 
   let emailSent = false;
 
@@ -2562,7 +2572,5 @@ router.post(
       }
     }
   );
-
-
 
   module.exports = router;
