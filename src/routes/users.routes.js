@@ -292,19 +292,21 @@ if (req.user.role === "employer") {
     employer_id: req.user.sub,
   });
 
-  const candidate = await repo.users.findById(targetUserId);
+ const candidate = await repo.users.findById(targetUserId);
 
-  if (candidate?.role === "student") {
-    const candidateApplications = await repo.applications.listByStudent(
-      candidate.id
-    );
+if (candidate?.role === "student") {
+  const candidateApplications = await repo.applications.listByStudent(
+    candidate.id
+  );
 
-    isAuthorizedEmployer = candidateApplications.some((application) =>
-      employerJobs.some(
-        (job) => String(job.id) === String(application.job_id)
-      )
-    );
-  }
+  isAuthorizedEmployer = candidateApplications.some((application) =>
+    employerJobs.some(
+      (job) =>
+        String(job.id) === String(application.job_id) &&
+        String(job.employer_id) === String(req.user.sub)
+    )
+  );
+}
 }
 
 if (!isOwner && !isAdmin && !isAuthorizedEmployer) {
