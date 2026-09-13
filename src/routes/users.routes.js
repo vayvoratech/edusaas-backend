@@ -228,6 +228,8 @@ function sanitizeUser(user) {
     email: user.email,
     role: user.role,
     status: user.status,
+    domain_role_id: user.domain_role_id,
+    domain_role: user.domain_role,
     last_login: user.last_login,
     created_at: user.created_at,
   };
@@ -283,8 +285,35 @@ router.get("/:id", authRequired, async (req, res, next) => {
       });
     }
 
-    const user = await repo.users.findById(targetUserId);
+let isAuthorizedEmployer = false;
 
+if (req.user.role === "employer") {
+  const employerJobs = await repo.jobs.list({
+    employer_id: req.user.sub,
+  });
+
+  const candidate = await repo.users.findById(targetUserId);
+
+  if (candidate?.role === "student") {
+    const candidateApplications = await repo.applications.listByStudent(
+      candidate.id
+    );
+
+    isAuthorizedEmployer = candidateApplications.some((application) =>
+      employerJobs.some(
+        (job) => String(job.id) === String(application.job_id)
+      )
+    );
+  }
+}
+
+if (!isOwner && !isAdmin && !isAuthorizedEmployer) {
+  return res.status(403).json({
+    error: "You are not authorized to view this profile.",
+  });
+}
+
+const user = await repo.users.findById(targetUserId);
     if (!user) {
       return res.status(404).json({
         error: "User not found.",

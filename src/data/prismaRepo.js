@@ -560,6 +560,7 @@ module.exports = {
         data: {
           initial_assessment_completed: true,
         },
+        
       }),
   },
 
