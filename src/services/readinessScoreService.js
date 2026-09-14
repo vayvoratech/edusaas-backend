@@ -1,6 +1,21 @@
 const clampScore = (score) =>
   Math.min(100, Math.max(0, Number(score) || 0));
 
+const calculateInitialReadiness = (
+  initialQuizScore,
+  initialCodingScore
+) => {
+  const quiz = clampScore(initialQuizScore);
+  const coding = clampScore(initialCodingScore);
+
+  return Number(
+    clampScore(
+      quiz * 0.60 +
+      coding * 0.40
+    ).toFixed(2)
+  );
+};
+
 /**
  * Calculate static-analysis quality score.
  *
@@ -112,6 +127,7 @@ const calculateEffectiveReadiness = (
 };
 
 module.exports = {
+  calculateInitialReadiness,
   calculateStaticScore,
   calculatePlagiarismPenalty,
   calculateMiniProjectScore,

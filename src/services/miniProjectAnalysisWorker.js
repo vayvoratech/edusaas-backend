@@ -9,6 +9,7 @@ const {
 const {
   analyzeRepository,
 } = require("./staticAnalysisService");
+const skillGapService = require("./skillGapService")
 
 const {checkMiniProjectPlagiarism} = require("./aimlClient")
 const {calculateStaticScore, calculateMiniProjectScore } = require("./readinessScoreService")
@@ -188,12 +189,22 @@ async function processAnalysis(analysis) {
       }
     );
 
+    
+
+    
+
     /*
      * 12. Plagiarism is the final analysis stage for now.
      *     Mark both plagiarism and overall analysis completed.
      */
     await prismaRepo.miniProjects.completePlagiarismAnalysis(
       analysis.id
+    );
+
+    await skillGapService.updateFinalReadiness(
+      analysis.submission.student_id,
+      null,
+      miniProjectScore
     );
 
     return {

@@ -3,6 +3,7 @@ const repo = require("../data/prismaRepo");
 const { runCode, runCodeBatch } = require("./dockerService");
 const skillGapService = require("./skillGapService")
 const aimlClient = require("./aimlClient");
+const { calculateInitialReadiness } = require("./readinessScoreService")
 require('dotenv').config()
 const CODING_QUESTION_COUNT = 3;
 const CODING_TEST_CONCURRENCY = Math.max(
@@ -1240,7 +1241,10 @@ async function completeAssessment({ userId, sessionId }) {
 
   if (codingSession.status === "Completed") {
     const completedQuizSession =
-      await repo.quizSessions.findCompletedByUser(userId);
+      await repo.quizSessions.findCompletedByUserAndAssessmentType(
+        userId,
+        "INITIAL"
+      );
 
     if (!completedQuizSession) {
       const error = new Error(
@@ -1250,19 +1254,10 @@ async function completeAssessment({ userId, sessionId }) {
       throw error;
     }
 
-    const quizResults =
-      await repo.studentSkillResults.findBySessionId(
+    const quizScore =
+      await repo.studentSkillResults.getQuizScoreBySessionId(
         completedQuizSession.session_id
       );
-
-    const quizScore =
-      quizResults.length > 0
-        ? quizResults.reduce(
-            (sum, result) =>
-              sum + Number(result.percentage || 0),
-            0
-          ) / quizResults.length
-        : 0;
 
     const totalScore = Number(
       codingSession.total_score || 0
@@ -1277,12 +1272,15 @@ async function completeAssessment({ userId, sessionId }) {
         ? (totalScore / maxScore) * 100
         : 0;
 
-    const readinessScore = Number(
-      (quizScore * 0.6 + codingScore * 0.4).toFixed(2)
-    );
+    const readinessScore =
+      calculateInitialReadiness(
+        quizScore ?? 0,
+        codingScore
+      );
 
     await repo.gapReports.upsert(userId, {
       readiness_score: readinessScore,
+      initial_readiness_score: readinessScore,
     });
 
     return {
@@ -1350,7 +1348,10 @@ async function completeAssessment({ userId, sessionId }) {
     repo.codingSubmissions.findBySessionId(
       numericSessionId
     ),
-    repo.quizSessions.findCompletedByUser(userId),
+    repo.quizSessions.findCompletedByUserAndAssessmentType(
+      userId,
+      "INITIAL"
+    ),
   ]);
 
   // ---------------------------------------------------------
@@ -1491,19 +1492,10 @@ async function completeAssessment({ userId, sessionId }) {
     throw error;
   }
 
-  const quizResults =
-    await repo.studentSkillResults.findBySessionId(
+  const quizScore =
+    await repo.studentSkillResults.getQuizScoreBySessionId(
       completedQuizSession.session_id
     );
-
-  const quizScore =
-    quizResults.length > 0
-      ? quizResults.reduce(
-          (sum, result) =>
-            sum + Number(result.percentage || 0),
-          0
-        ) / quizResults.length
-      : 0;
 
   const codingScore =
     maxScore > 0
@@ -1516,14 +1508,18 @@ async function completeAssessment({ userId, sessionId }) {
     finalStatus === "Completed" &&
     questionsCompleted === CODING_QUESTION_COUNT
   ) {
-    readinessScore = Number(
-      (quizScore * 0.6 + codingScore * 0.4).toFixed(2)
+    readinessScore = calculateInitialReadiness(
+      quizScore ?? 0,
+      codingScore
     );
 
     void skillGapService.generateGapReport(userId, {
       readinessScore,
     }).catch((error) => {
-      console.error("Background gap report generation failed:", error);
+      console.error(
+        "Background gap report generation failed:",
+        error
+      );
     });
   }
 

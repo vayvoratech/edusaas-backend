@@ -618,31 +618,33 @@ module.exports = {
   },
 
   gapReports: {
-    findByUserId: async (user_id) => mapGap(await prisma.gapReport.findFirst({ where: { user_id } })),
-    upsert: async (user_id, data) => {
-    const existing = await prisma.gapReport.findFirst({
-      where: { user_id },
-    });
+    findByUserId: async (user_id) =>
+      mapGap(await prisma.gapReport.findFirst({ where: { user_id } })),
 
-    if (existing) {
+    upsert: async (user_id, data) => {
+      const existing = await prisma.gapReport.findFirst({
+        where: { user_id },
+      });
+
+      if (existing) {
+        return mapGap(
+          await prisma.gapReport.update({
+            where: { id: existing.id },
+            data,
+          })
+        );
+      }
+
       return mapGap(
-        await prisma.gapReport.update({
-          where: { id: existing.id },
-          data,
+        await prisma.gapReport.create({
+          data: {
+            ...data,
+            user_id,
+            readiness_score: data.readiness_score ?? 0,
+          },
         })
       );
-    }
-
-    return mapGap(
-      await prisma.gapReport.create({
-        data: {
-          ...data,
-          user_id,
-          readiness_score: data.readiness_score ?? 0,
-        },
-      })
-    );
-  },
+    },
   },
 
   courses: {
@@ -1428,6 +1430,21 @@ module.exports = {
       },
     }),
 
+  findCompletedByUserAndAssessmentType: async ( user_id, assessment_type ) =>
+    prisma.quizSession.findFirst({
+      where: {
+        user_id,
+        assessment_type,
+        status: "Completed",
+      },
+      include: {
+        domainRole: true,
+      },
+      orderBy: {
+        start_time: "desc",
+      },
+    }),
+
    create: async (data) => {
       return prisma.quizSession.create({
         data,
@@ -1882,6 +1899,28 @@ module.exports = {
         skill_id: "asc",
       },
     }),
+
+  getQuizScoreBySessionId: async (sessionId) => {
+    const results = await prisma.studentSkillResult.findMany({
+      where: {
+        session_id: sessionId,
+      },
+      select: {
+        percentage: true,
+      },
+    });
+
+    if (!results.length) {
+      return null;
+    }
+
+    return Math.round(
+      results.reduce(
+        (sum, result) => sum + Number(result.percentage),
+        0
+      ) / results.length
+    );
+  },
 
   create: async (data) =>
     prisma.studentSkillResult.create({

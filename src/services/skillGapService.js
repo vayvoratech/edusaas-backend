@@ -1,6 +1,7 @@
 
 
 const repo = require("../data");
+const {calculateEffectiveReadiness, calculateFinalReadiness} = require("./readinessScoreService")
 
 // ---------------------------------------------------------------------
 // Pure in-memory calculation of student's skill gap & readiness score.
@@ -107,9 +108,7 @@ async function generateGapReport(userId, { readinessScore } = {}) {
   }
 
   // 3. Student's most recent completed assessment
-  const completedSession = await repo.quizSessions.findCompletedByUser(
-    userId
-  );
+  const completedSession = await repo.quizSessions.findCompletedByUser( userId, "INITIAL");
 
   if (!completedSession) {
     const error = new Error(
@@ -154,12 +153,33 @@ async function generateGapReport(userId, { readinessScore } = {}) {
 
   const existingReport = await repo.gapReports.findByUserId(userId);
 
-  // 8. One report per student — upsert overwrites the previous one
+  // 8. Preserve assessment-derived readiness scores.
+  // The native skill-gap calculation is used only for skill-gap analysis
+  // and must not overwrite Initial/Final assessment readiness.
+  const preservedInitialReadiness =
+    readinessScore ??
+    existingReport?.initial_readiness_score ??
+    analysis.readiness_score;
+
+  const preservedFinalReadiness =
+    existingReport?.final_readiness_score ?? null;
+
+  const effectiveReadiness =
+    preservedFinalReadiness == null
+      ? preservedInitialReadiness
+      : Math.max(
+          preservedInitialReadiness,
+          preservedFinalReadiness
+        );
+
   const report = await repo.gapReports.upsert(userId, {
-    readiness_score:
-      readinessScore ??
-      existingReport?.readiness_score ??
-      analysis.readiness_score,
+    readiness_score: Number(effectiveReadiness.toFixed(2)),
+    initial_readiness_score:
+      Number(preservedInitialReadiness.toFixed(2)),
+    final_readiness_score:
+      preservedFinalReadiness == null
+        ? null
+        : Number(preservedFinalReadiness.toFixed(2)),
     missing_skills: analysis.missing_skills,
     recommendations,
   });
@@ -167,7 +187,131 @@ async function generateGapReport(userId, { readinessScore } = {}) {
   return report;
 }
 
+async function updateFinalReadiness(
+  userId,
+  finalQuizScore = null,
+  miniProjectScore = null
+) {
+  const existingReport =
+    await repo.gapReports.findByUserId(userId);
+
+  // Initial assessment must already exist.
+  // We should not create a standalone readiness report here.
+  if (!existingReport) {
+    return null;
+  }
+
+  let resolvedFinalQuizScore = finalQuizScore;
+  let resolvedMiniProjectScore = miniProjectScore;
+
+  /*
+   * ------------------------------------------------------------
+   * Resolve Final Quiz score if caller did not provide it.
+   * ------------------------------------------------------------
+   */
+  if (resolvedFinalQuizScore == null) {
+    const finalSession =
+      await repo.quizSessions.findLatestByUserAndAssessmentType(
+        userId,
+        "FINAL"
+      );
+
+    if (finalSession?.status !== "Completed") {
+      return null;
+    }
+
+    resolvedFinalQuizScore =
+      await repo.studentSkillResults.getQuizScoreBySessionId(
+        finalSession.session_id
+      );
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * Resolve Mini Project score if caller did not provide it.
+   * ------------------------------------------------------------
+   */
+  if (resolvedMiniProjectScore == null) {
+    const finalSession =
+      await repo.quizSessions.findLatestByUserAndAssessmentType(
+        userId,
+        "FINAL"
+      );
+
+    if (!finalSession?.domain_role_id) {
+      return null;
+    }
+
+    const currentProject =
+      await repo.miniProjects.getCurrentForStudent(
+        userId,
+        finalSession.domain_role_id
+      );
+
+    if (!currentProject?.submissions?.length) {
+      return null;
+    }
+
+    const completedSubmission =
+      currentProject.submissions.find(
+        (submission) =>
+          submission.analysis?.status === "COMPLETED" &&
+          submission.analysis?.readiness_score != null
+      );
+
+    if (!completedSubmission) {
+      return null;
+    }
+
+    resolvedMiniProjectScore =
+      Number(
+        completedSubmission.analysis.readiness_score
+      );
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * Final readiness is valid ONLY when both components exist.
+   * ------------------------------------------------------------
+   */
+  if (
+    resolvedFinalQuizScore == null ||
+    resolvedMiniProjectScore == null
+  ) {
+    return null;
+  }
+
+  const finalReadiness =
+    calculateFinalReadiness(
+      resolvedFinalQuizScore,
+      resolvedMiniProjectScore
+    );
+
+  const effectiveReadiness =
+    calculateEffectiveReadiness(
+      existingReport.initial_readiness_score,
+      finalReadiness
+    );
+
+  return repo.gapReports.upsert(userId, {
+    readiness_score: effectiveReadiness,
+
+    initial_readiness_score:
+      existingReport.initial_readiness_score,
+
+    final_readiness_score:
+      finalReadiness,
+
+    missing_skills:
+      existingReport.missing_skills,
+
+    recommendations:
+      existingReport.recommendations,
+  });
+}
+
 module.exports = {
   generateGapReport,
   computeSkillGap,
+  updateFinalReadiness,
 };

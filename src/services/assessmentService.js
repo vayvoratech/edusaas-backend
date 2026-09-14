@@ -2609,23 +2609,26 @@ async function submitInitialAssessmentAnswer(
       end_time: new Date(),
     });
 
-    await repo.profiles.upsert(userId, {
-      initial_assessment_completed: true,
-    });
+    if (quizSession.assessment_type === "INITIAL") {
+      await repo.profiles.upsert(userId, {
+        initial_assessment_completed: true,
+      });
+    }
 
-    const allResults = await repo.studentSkillResults.findBySessionId(
+   const quizReadinessScore =
+    await repo.studentSkillResults.getQuizScoreBySessionId(
       sessionId
     );
 
-
-    // Quiz's own readiness metric: average % correct across skills.
-    // NOT the same number as the skill-gap engine's readiness_score
-    // (student skill level vs required skill level) below — don't
-    // conflate the two.
-    const quizReadinessScore = Math.round(
-      allResults.reduce((sum, skill) => sum + Number(skill.percentage), 0) /
-      allResults.length
-    );
+    // Persist the FINAL quiz score so a later portion can compute:
+    //   finalReadiness = finalQuizScore * 0.40 + miniProjectScore * 0.60
+    // Only runs for FINAL assessment completion; Initial quiz is unaffected.
+    if (quizSession.assessment_type === "FINAL") {
+      await skillGapService.updateFinalReadiness(
+        userId,
+        quizReadinessScore
+      );
+    }
 
     return {
       assessment_completed: true,
