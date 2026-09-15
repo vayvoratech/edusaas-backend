@@ -1,6 +1,7 @@
 const express = require("express");
 const repo = require("../data");
 const uploadResume = require("../middleware/uploadResume");
+const uploadAvatar = require("../middleware/uploadAvatar");
 const {
   authRequired,
   roleRequired,
@@ -224,6 +225,7 @@ function sanitizeUser(user) {
 
   return {
     id: user.id,
+    clerk_id: user.clerk_id,
     name: user.name,
     email: user.email,
     role: user.role,
@@ -234,6 +236,7 @@ function sanitizeUser(user) {
     created_at: user.created_at,
   };
 }
+
 
 /**
  * @openapi
@@ -330,6 +333,66 @@ const user = await repo.users.findById(targetUserId);
 
 /**
  * @openapi
+ * /api/users/{id}:
+ *   patch:
+ *     tags: [Users]
+ *     summary: Update user basic details (e.g. name)
+ *     security: [{ bearerAuth: [] }]
+ */
+router.patch("/:id", authRequired, async (req, res, next) => {
+  try {
+    const requestedId = req.params.id === "me" ? req.user.sub : req.params.id;
+    const user = await repo.users.findById(requestedId);
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const isOwner =
+      req.user.sub === user.id ||
+      (user.clerk_id && (req.user.clerk_id === user.clerk_id || req.user.sub === user.clerk_id));
+
+    if (!isOwner && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Cannot update another user's details." });
+    }
+
+    const { name } = req.body;
+
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({ error: "A valid name is required." });
+    }
+
+    const trimmedName = name.trim();
+
+    // 1. Update in Postgres Database
+    const updatedUser = await repo.users.update(user.id, { name: trimmedName });
+
+    // 2. Best-effort update to Clerk if clerk_id exists
+    if (user.clerk_id) {
+      try {
+        const parts = trimmedName.split(/\s+/);
+        const firstName = parts[0];
+        const lastName = parts.slice(1).join(" ") || undefined;
+        await clerkClient.users.updateUser(user.clerk_id, {
+          firstName,
+          lastName,
+        });
+      } catch (clerkErr) {
+        console.warn("[USERS] Could not update name in Clerk:", clerkErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      user: sanitizeUser(updatedUser),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @openapi
  * /api/users/{id}/profile:
  *   put:
  *     tags: [Users]
@@ -338,11 +401,19 @@ const user = await repo.users.findById(targetUserId);
  */
 router.put("/:id/profile", authRequired, async (req, res, next) => {
   try {
-    const targetUserId =
-      req.params.id === "me" ? req.user.sub : req.params.id;
+    const requestedId = req.params.id === "me" ? req.user.sub : req.params.id;
+    const user = await repo.users.findById(requestedId);
 
-    // Only the owner or admin can update a profile
-    const isOwner = req.user.sub === targetUserId;
+    if (!user) {
+      return res.status(404).json({
+        error: "User not found.",
+      });
+    }
+
+    // Only owner or admin
+    const isOwner =
+      req.user.sub === user.id ||
+      (user.clerk_id && (req.user.clerk_id === user.clerk_id || req.user.sub === user.clerk_id));
     const isAdmin =
       req.user.role === "admin" ||
       req.user.role === "super_admin";
@@ -368,8 +439,30 @@ router.put("/:id/profile", authRequired, async (req, res, next) => {
       }
     }
 
+    // Support top-level educator, employer, and admin fields into preferences seamlessly
+    const extraFields = [
+      "specialization", "title", "bio",
+      "industry", "location", "website", "about_company", "company_bio",
+      "department", "clearance", "office_location", "admin_scope"
+    ];
+    const hasExtraFields = extraFields.some((f) => req.body[f] !== undefined);
+
+    if (hasExtraFields) {
+      const existingProfile = await repo.profiles.findByUserId(user.id);
+      const existingPrefs = (existingProfile && existingProfile.preferences) || {};
+      data.preferences = {
+        ...existingPrefs,
+        ...(data.preferences || {}),
+      };
+      for (const f of extraFields) {
+        if (req.body[f] !== undefined) {
+          data.preferences[f] = req.body[f];
+        }
+      }
+    }
+
     const profile = await repo.profiles.upsert(
-      targetUserId,
+      user.id,
       data
     );
 
@@ -387,13 +480,21 @@ router.post(
   uploadResume.single("resume"),
   async (req, res, next) => {
     try {
-      const targetUserId = req.params.id === "me" ? req.user.sub : req.params.id;
+      const requestedId = req.params.id === "me" ? req.user.sub : req.params.id;
+      const user = await repo.users.findById(requestedId);
+
+      if (!user) {
+        return res.status(404).json({
+          error: "User not found.",
+        });
+      }
 
       // Only owner or admin
-      if (
-        req.user.sub !== targetUserId &&
-        req.user.role !== "admin"
-      ) {
+      const isOwner =
+        req.user.sub === user.id ||
+        (user.clerk_id && (req.user.clerk_id === user.clerk_id || req.user.sub === user.clerk_id));
+
+      if (!isOwner && req.user.role !== "admin") {
         return res.status(403).json({
           error: "Cannot update another user's resume.",
         });
@@ -406,7 +507,7 @@ router.post(
       }
 
       const existingProfile =
-        await repo.profiles.findByUserId(targetUserId);
+        await repo.profiles.findByUserId(user.id);
 
       const resume = {
         file_name: req.file.originalname,
@@ -417,7 +518,7 @@ router.post(
       };
 
       const profile = await repo.profiles.upsert(
-        targetUserId,
+        user.id,
         { resume }
       );
 
@@ -434,6 +535,109 @@ router.post(
     }
   }
 );
+
+/**
+ * @openapi
+ * /api/users/{id}/avatar:
+ *   post:
+ *     tags: [Users]
+ *     summary: Upload and set user profile picture
+ *     security: [{ bearerAuth: [] }]
+ */
+router.post(
+  "/:id/avatar",
+  authRequired,
+  uploadAvatar.single("avatar"),
+  async (req, res, next) => {
+    try {
+      const requestedId = req.params.id === "me" ? req.user.sub : req.params.id;
+      const user = await repo.users.findById(requestedId);
+
+      if (!user) {
+        return res.status(404).json({ error: "User not found." });
+      }
+
+      const isOwner =
+        req.user.sub === user.id ||
+        (user.clerk_id && (req.user.clerk_id === user.clerk_id || req.user.sub === user.clerk_id));
+
+      if (!isOwner && req.user.role !== "admin") {
+        return res.status(403).json({ error: "Cannot update another user's avatar." });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: "Please select an image file." });
+      }
+
+      const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+
+      const existingProfile = await repo.profiles.findByUserId(user.id);
+      const existingPrefs = (existingProfile && existingProfile.preferences) || {};
+
+      const updatedProfile = await repo.profiles.upsert(user.id, {
+        preferences: {
+          ...existingPrefs,
+          avatar_url: avatarUrl,
+        },
+      });
+
+      return res.json({
+        success: true,
+        message: "Profile picture updated successfully.",
+        avatar_url: avatarUrl,
+        profile: updatedProfile,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * @openapi
+ * /api/users/{id}/avatar:
+ *   delete:
+ *     tags: [Users]
+ *     summary: Remove user profile picture
+ *     security: [{ bearerAuth: [] }]
+ */
+router.delete("/:id/avatar", authRequired, async (req, res, next) => {
+  try {
+    const requestedId = req.params.id === "me" ? req.user.sub : req.params.id;
+    const user = await repo.users.findById(requestedId);
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const isOwner =
+      req.user.sub === user.id ||
+      (user.clerk_id && (req.user.clerk_id === user.clerk_id || req.user.sub === user.clerk_id));
+
+    if (!isOwner && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Cannot update another user's avatar." });
+    }
+
+    const existingProfile = await repo.profiles.findByUserId(user.id);
+    const existingPrefs = (existingProfile && existingProfile.preferences) || {};
+
+    const updatedPrefs = { ...existingPrefs };
+    delete updatedPrefs.avatar_url;
+
+    const updatedProfile = await repo.profiles.upsert(user.id, {
+      preferences: updatedPrefs,
+    });
+
+    return res.json({
+      success: true,
+      message: "Profile picture removed successfully.",
+      avatar_url: null,
+      profile: updatedProfile,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * @openapi
