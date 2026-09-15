@@ -97,6 +97,7 @@ app.use("/api/announcements", announcementsRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/rbac", rbacRoutes);
 app.use("/api/community", communityRoutes);
+app.use("/api/aiml", require("./src/routes/aiml.routes"));
 
 const repo = require("./src/data");
 const { authRequired } = require("./src/middleware/auth");
