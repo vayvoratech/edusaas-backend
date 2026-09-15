@@ -11,6 +11,8 @@ datasource db {
 model User {
   id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name                    String                    @db.VarChar(255)
+  username                String?                   @unique @db.VarChar(255)
+  clerk_id                String?                   @unique @db.VarChar(255)
   email                   String                    @unique @db.VarChar(255)
   role_id                 String                    @db.Uuid
   password_hash           String
@@ -50,10 +52,28 @@ model User {
   coding_submissions      coding_submissions[]
   role                    Role                      @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_users_role")
   domainRole              DomainRole?               @relation(fields: [domain_role_id], references: [domain_role_id])
+  sentConnections         Connection[]              @relation("SentConnections")
+  receivedConnections     Connection[]              @relation("ReceivedConnections")
 
   @@index([role_id], map: "idx_users_role")
   @@index([domain_role_id])
   @@map("users")
+  @@schema("education")
+}
+
+model Connection {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requesterId String   @db.Uuid
+  receiverId  String   @db.Uuid
+  status      String   @default("pending") @db.VarChar(20) // 'pending', 'accepted', 'rejected'
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  requester User @relation("SentConnections", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver  User @relation("ReceivedConnections", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, receiverId])
+  @@map("connections")
   @@schema("education")
 }
 
@@ -148,11 +168,14 @@ model CourseRating {
   user_id    String   @db.Uuid
   course_id  String   @db.Uuid
   rating     Float
+  review     String?
   created_at DateTime @default(now()) @db.Timestamp(6)
   updated_at DateTime @default(now()) @db.Timestamp(6)
   course     Course   @relation(fields: [course_id], references: [id])
-  user       User     @relation(fields: [user_id], references: [id])
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
+  @@unique([user_id, course_id])
+  @@index([course_id])
   @@map("course_ratings")
   @@schema("education")
 }
@@ -208,7 +231,7 @@ model CourseProgress {
   created_at        DateTime @default(now()) @db.Timestamp(6)
 
   course Course @relation(fields: [course_id], references: [id])
-  user   User   @relation(fields: [user_id], references: [id])
+  user   User   @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@map("course_progress")
   @@schema("education")
@@ -254,7 +277,7 @@ model final_submissions {
   code               String
   submitted_at       DateTime?            @default(now()) @db.Timestamptz(6)
   domain_roles       DomainRole           @relation(fields: [domain_role_id], references: [domain_role_id], onDelete: NoAction, onUpdate: NoAction, map: "fk_final_submission_domain_roles")
-  users              User                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_final_submission_user")
+  user               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_final_submission_user")
   plagiarism_checks  plagiarism_checks[]
   plagiarism_matches plagiarism_matches[]
 
@@ -297,8 +320,20 @@ model Job {
   employer_id              String   @db.Uuid
   title                    String   @db.VarChar(255)
   description              String?
+  responsibilities         String?
   requirements             String?
   required_skills          String[]
+  preferred_skills         String[] @default([])
+  qualification            String?  @db.VarChar(255)
+  eligible_branches        String[] @default([])
+  employment_type          String?  @db.VarChar(100)
+  work_mode                String?  @db.VarChar(100)
+  location                 String?  @db.VarChar(255)
+  salary                   String?  @db.VarChar(100)
+  application_deadline     String?  @db.VarChar(100)
+  require_video            Boolean? @default(false)
+  video_max_duration       Int?     @default(60)
+  video_prompt             String?
   status                   String   @default("open") @db.VarChar(50)
   created_at               DateTime @default(now()) @db.Timestamp(6)
   domain_role_id           String?  @db.Uuid
@@ -336,8 +371,10 @@ model Application {
   skill_match      Float?
   applied_at       DateTime @default(now()) @db.Timestamp(6)
   application_data Json?
-  job              Job      @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_job")
-  student          User     @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_student")
+
+  job        Job         @relation(fields: [job_id], references: [id], onDelete: Cascade, map: "fk_application_job")
+  student    User        @relation(fields: [student_id], references: [id], onDelete: Cascade, map: "fk_application_student")
+  interviews Interview[]
 
   @@unique([job_id, student_id], map: "uq_application")
   @@index([job_id], map: "idx_application_job")
@@ -346,17 +383,38 @@ model Application {
   @@schema("education")
 }
 
+model Interview {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  application_id String   @db.Uuid
+  scheduled_at   DateTime @db.Timestamp(6)
+  duration       Int      @default(30)
+  interview_type String   @default("online") @db.VarChar(50)
+  meeting_link   String?
+  status         String   @default("scheduled") @db.VarChar(50)
+  notes          String?
+  created_at     DateTime @default(now()) @db.Timestamp(6)
+  updated_at     DateTime @default(now()) @updatedAt @db.Timestamp(6)
+
+  application Application @relation(fields: [application_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_interview_application")
+
+  @@index([application_id], map: "idx_interview_application")
+  @@map("interviews")
+  @@schema("education")
+}
+
 model Notification {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id     String    @db.Uuid
-  type        String    @db.VarChar(100)
-  message     String
-  read_status Boolean   @default(false)
-  created_at  DateTime  @default(now()) @db.Timestamp(6)
-  expires_at  DateTime? @db.Timestamp(6)
-  job_id      String?   @db.Uuid
-  user        User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_user")
-  job         Job?      @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id      String    @db.Uuid
+  type         String    @db.VarChar(100)
+  message      String
+  read_status  Boolean   @default(false)
+  created_at   DateTime  @default(now()) @db.Timestamp(6)
+  expires_at   DateTime? @db.Timestamp(6)
+  job_id       String?   @db.Uuid
+  reference_id String?   @db.VarChar(255)
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_user")
+  job  Job? @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([user_id], map: "idx_notification_user")
   @@index([job_id], map: "idx_notification_job")

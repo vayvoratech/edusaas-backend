@@ -5,6 +5,7 @@ const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
 const assessmentService = require("../services/assessmentService");
 const codingAssessmentService = require("../services/codingAssessmentService")
+const aimlClient = require("../services/aimlClient");
 console.log("ASSESSMENT SERVICE EXPORTS:", Object.keys(assessmentService));
 
 const router = express.Router();
@@ -62,6 +63,39 @@ router.post("/", authRequired, async (req, res, next) => {
       score,
       answers: answers || [],
     });
+
+    try {
+      // Mocking session metrics for fraud detection
+      const fraudData = {
+        student_id: req.user.sub, // Will be hashed inside aimlClient.js
+        completion_percentage: 100,
+        watch_time_minutes: 60,
+        quiz_score: score,
+        rating: 4,
+        sessions_last_30_days: 10,
+        avg_session_minutes: 30,
+        videos_watched: 5,
+        assignments_attempted: 2,
+        discussion_interactions: 1,
+        login_count: 5,
+        device_count: req.body.device_count || 1, // e.g. from frontend telemetry
+        ip_changes: req.body.ip_changes || 0,
+        payment_status: "PAID",
+        enrollment_source: "WEB",
+        enrollment_status: "ACTIVE"
+      };
+
+      const fraudResp = await aimlClient.predictFraud(fraudData);
+
+      if (fraudResp && fraudResp.data && fraudResp.data.is_fraudulent) {
+        console.warn(`[AIML Fraud] Flagged assessment ${assessment.id} for potential fraud`);
+        // We could flag the assessment in DB here
+        // await repo.assessments.flagFraud(assessment.id);
+      }
+    } catch (err) {
+      console.warn("[AIML Fraud Detection] Skipped or failed:", err.message);
+    }
+
     return res.status(201).json(assessment);
   } catch (err) {
     next(err);
@@ -108,10 +142,10 @@ router.get("/:id/results", authRequired, async (req, res, next) => {
 });
 
 router.get("/overview", authRequired, async (req, res) => {
-  try{
-    const overview = await assessmentService.getAssessmentOverview( req.user.sub )
+  try {
+    const overview = await assessmentService.getAssessmentOverview(req.user.sub)
     return res.json(overview)
-  }catch(error){
+  } catch (error) {
     console.error("Failed to get assessment overview", error);
     return res.status(500).json({
       error: "Failed to get assessment overview"
@@ -218,44 +252,44 @@ router.post("/initial-quiz/pause", authRequired, async (req, res, next) => {
   }
 });
 
-router.post( "/initial-quiz/heartbeat", authRequired, async (req, res, next) => {
-    try {
-      if (req.user.role !== "student") {
-        return res.status(403).json({
-          error: "Only students can send assessment heartbeat.",
-        });
-      }
-
-      const { session_id } = req.body || {};
-
-      if (session_id === undefined) {
-        return res.status(400).json({
-          error: "session_id is required.",
-        });
-      }
-
-      const sessionId = Number(session_id);
-
-      if (!Number.isInteger(sessionId)) {
-        return res.status(400).json({
-          error: "session_id must be a valid integer.",
-        });
-      }
-
-      const result =
-        await assessmentService.heartbeatInitialAssessment(
-          req.user.sub,
-          sessionId
-        );
-
-      return res.status(200).json({
-        success: true,
-        data: result,
+router.post("/initial-quiz/heartbeat", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can send assessment heartbeat.",
       });
-    } catch (err) {
-      next(err);
     }
+
+    const { session_id } = req.body || {};
+
+    if (session_id === undefined) {
+      return res.status(400).json({
+        error: "session_id is required.",
+      });
+    }
+
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result =
+      await assessmentService.heartbeatInitialAssessment(
+        req.user.sub,
+        sessionId
+      );
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
   }
+}
 );
 
 router.post("/initial-quiz/answer", authRequired, async (req, res, next) => {
@@ -313,128 +347,128 @@ router.post("/initial-quiz/answer", authRequired, async (req, res, next) => {
 
 // Initial coding assessment
 // React -> Node -> codingAssessmentService -> PostgreSQL / Docker
-router.post( "/initial-coding/start", authRequired, async (req, res, next) => {
-    try {
-      if (req.user.role !== "student") {
-        return res.status(403).json({
-          error: "Only students can start the coding assessment.",
-        });
-      }
-
-      const { session_id } = req.body || {};
-
-      if (session_id === undefined) {
-        return res.status(400).json({
-          error: "session_id is required.",
-        });
-      }
-
-      const sessionId = Number(session_id);
-
-      if (!Number.isInteger(sessionId)) {
-        return res.status(400).json({
-          error: "session_id must be a valid integer.",
-        });
-      }
-
-      const result = await codingAssessmentService.startAssessment({
-        userId: req.user.sub,
-        sessionId,
+router.post("/initial-coding/start", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can start the coding assessment.",
       });
-
-      return res.status(200).json({
-        success: true,
-        data: result,
-      });
-    } catch (err) {
-      next(err);
     }
+
+    const { session_id } = req.body || {};
+
+    if (session_id === undefined) {
+      return res.status(400).json({
+        error: "session_id is required.",
+      });
+    }
+
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result = await codingAssessmentService.startAssessment({
+      userId: req.user.sub,
+      sessionId,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
   }
+}
 );
 
-router.post("/initial-coding/run", authRequired,async (req, res, next) => {
-    try {
-      if (req.user.role !== "student") {
-        return res.status(403).json({
-          error: "Only students can run coding submissions.",
-        });
-      }
-
-      const result = await codingAssessmentService.runStudentCode({
-        userId: req.user.sub,
-        ...req.body,
+router.post("/initial-coding/run", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can run coding submissions.",
       });
-
-      return res.status(200).json({
-        success: true,
-        data: result,
-      });
-    } catch (err) {
-      next(err);
     }
+
+    const result = await codingAssessmentService.runStudentCode({
+      userId: req.user.sub,
+      ...req.body,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
   }
+}
 );
 
-router.post( "/initial-coding/submit", authRequired, async (req, res, next) => {
-    try {
-      if (req.user.role !== "student") {
-        return res.status(403).json({
-          error: "Only students can submit coding answers.",
-        });
-      }
-
-      const result = await codingAssessmentService.submitCode({
-        userId: req.user.sub,
-        ...req.body,
+router.post("/initial-coding/submit", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can submit coding answers.",
       });
-
-      return res.status(200).json({
-        success: true,
-        data: result,
-      });
-    } catch (err) {
-      next(err);
     }
+
+    const result = await codingAssessmentService.submitCode({
+      userId: req.user.sub,
+      ...req.body,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
   }
+}
 );
 
-router.post( "/initial-coding/complete", authRequired, async (req, res, next) => {
-    try {
-      if (req.user.role !== "student") {
-        return res.status(403).json({
-          error: "Only students can complete the coding assessment.",
-        });
-      }
-
-      const { session_id } = req.body || {};
-
-      if (session_id === undefined) {
-        return res.status(400).json({
-          error: "session_id is required.",
-        });
-      }
-
-      const sessionId = Number(session_id);
-
-      if (!Number.isInteger(sessionId)) {
-        return res.status(400).json({
-          error: "session_id must be a valid integer.",
-        });
-      }
-
-      const result = await codingAssessmentService.completeAssessment({
-        userId: req.user.sub,
-        sessionId,
+router.post("/initial-coding/complete", authRequired, async (req, res, next) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can complete the coding assessment.",
       });
-
-      return res.status(200).json({
-        success: true,
-        data: result,
-      });
-    } catch (err) {
-      next(err);
     }
+
+    const { session_id } = req.body || {};
+
+    if (session_id === undefined) {
+      return res.status(400).json({
+        error: "session_id is required.",
+      });
+    }
+
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result = await codingAssessmentService.completeAssessment({
+      userId: req.user.sub,
+      sessionId,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
   }
+}
 );
 
 router.post("/initial-coding/activate", authRequired, async (req, res, next) => {
@@ -627,43 +661,43 @@ router.post("/final-quiz/pause", authRequired, async (req, res, next) => {
 });
 
 router.post("/final-quiz/heartbeat", authRequired, async (req, res, next) => {
-    try {
-      if (req.user.role !== "student") {
-        return res.status(403).json({
-          error: "Only students can send final quiz heartbeat.",
-        });
-      }
-
-      const { session_id } = req.body || {};
-
-      if (session_id === undefined) {
-        return res.status(400).json({
-          error: "session_id is required.",
-        });
-      }
-
-      const sessionId = Number(session_id);
-
-      if (!Number.isInteger(sessionId)) {
-        return res.status(400).json({
-          error: "session_id must be a valid integer.",
-        });
-      }
-
-      const result =
-        await assessmentService.heartbeatFinalAssessment(
-          req.user.sub,
-          sessionId
-        );
-
-      return res.status(200).json({
-        success: true,
-        data: result,
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        error: "Only students can send final quiz heartbeat.",
       });
-    } catch (err) {
-      next(err);
     }
+
+    const { session_id } = req.body || {};
+
+    if (session_id === undefined) {
+      return res.status(400).json({
+        error: "session_id is required.",
+      });
+    }
+
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId)) {
+      return res.status(400).json({
+        error: "session_id must be a valid integer.",
+      });
+    }
+
+    const result =
+      await assessmentService.heartbeatFinalAssessment(
+        req.user.sub,
+        sessionId
+      );
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
   }
+}
 );
 
 router.post("/final-quiz/answer", authRequired, async (req, res, next) => {

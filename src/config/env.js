@@ -17,22 +17,42 @@ if (APP_ENV) {
 require("dotenv").config();
 
 
+const rawAimlUrl = (
+  process.env.AIML_SERVICE_URL ||
+  process.env.AIML_BASE_URL ||
+  "https://edusaas-aiml-parb.onrender.com"
+).trim().replace(/\/+$/, "");
+
+const rawFraudWs = (
+  process.env.FRAUD_AI_WS_URL ||
+  (rawAimlUrl.startsWith("https://")
+    ? rawAimlUrl.replace("https://", "wss://") + "/ws/proctor"
+    : rawAimlUrl.startsWith("http://")
+    ? rawAimlUrl.replace("http://", "ws://") + "/ws/proctor"
+    : "ws://127.0.0.1:10000/ws/proctor")
+).trim();
+
 module.exports = {
   appEnv: APP_ENV || "default",
   port: parseInt(process.env.PORT, 10) || 5000,
 
- jwtSecret: process.env.JWT_SECRET || "dev-secret-change-me",
+  jwtSecret: process.env.JWT_SECRET || "dev-secret-change-me",
   jwtExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "1h",
 
   refreshJwtSecret:
-  process.env.JWT_REFRESH_SECRET || "dev-refresh-secret-change-me",
+    process.env.JWT_REFRESH_SECRET || "dev-refresh-secret-change-me",
 
   refreshJwtExpiresIn:
-  process.env.JWT_REFRESH_EXPIRES_IN || "7d",
+    process.env.JWT_REFRESH_EXPIRES_IN || "7d",
 
   databaseUrl: process.env.DATABASE_URL || "",
 
   smtpUser: process.env.SMTP_USER || "",
   smtpPass: process.env.SMTP_PASS || "",
   smtpFrom: process.env.SMTP_FROM || "",
+
+  aimlServiceUrl: rawAimlUrl,
+  fraudAiWsUrl: rawFraudWs,
+  plagiarismBaseUrl: rawAimlUrl,
+  flaskQuizUrl: rawAimlUrl,
 };

@@ -18,9 +18,64 @@ const router = express.Router();
  */
 router.get("/", authRequired, async (req, res, next) => {
   try {
-    const notifications = await repo.notifications.listByUser(req.user.sub);
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+    const notifications = await repo.notifications.listByUser(req.user.sub, limit);
 
     return res.json(notifications);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @openapi
+ * /api/notifications/read-all:
+ *   patch:
+ *     tags: [Notifications]
+ *     summary: Mark all notifications as read
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Successfully marked all as read
+ */
+router.patch("/read-all", authRequired, async (req, res, next) => {
+  try {
+    const result = await repo.notifications.markAllRead(req.user.sub);
+    return res.json({ success: true, count: result.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @openapi
+ * /api/notifications/read-announcements:
+ *   patch:
+ *     tags: [Notifications]
+ *     summary: Mark announcement notifications as read
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Successfully marked announcement notifications as read
+ */
+router.patch("/read-announcements", authRequired, async (req, res, next) => {
+  try {
+    const { announcementId } = req.body || {};
+    const where = {
+      user_id: req.user.sub,
+      type: "announcement",
+      read_status: false,
+    };
+    if (announcementId) {
+      where.reference_id = announcementId;
+    }
+    const result = await repo.prisma.notification.updateMany({
+      where,
+      data: { read_status: true },
+    });
+    return res.json({ success: true, count: result.count });
   } catch (err) {
     next(err);
   }
