@@ -3,6 +3,27 @@
 const repo = require("../data");
 
 // ---------------------------------------------------------------------
+// Empty report returned when the student has not completed the initial
+// assignment yet — empty arrays instead of an error, so the frontend can
+// render an empty state and reload automatically once the assessment is
+// completed (the report is then regenerated).
+// ---------------------------------------------------------------------
+function buildEmptyGapReport(userId) {
+  return {
+    id: null,
+    user_id: userId,
+    readiness_score: 0,
+    missing_skills: [],
+    recommendations: {
+      skill_gap: [],
+      suggestions: [],
+    },
+    created_at: null,
+    updated_at: null,
+  };
+}
+
+// ---------------------------------------------------------------------
 // Pure in-memory calculation of student's skill gap & readiness score.
 // Replaces external Python call with native 1ms Node.js computation.
 // ---------------------------------------------------------------------
@@ -112,11 +133,10 @@ async function generateGapReport(userId, { readinessScore } = {}) {
   );
 
   if (!completedSession) {
-    const error = new Error(
-      "Student has not completed an initial assessment yet"
-    );
-    error.status = 404;
-    throw error;
+    // Initial assignment not completed yet — return an empty report
+    // (no error) so the frontend shows empty data until the assessment
+    // is done, then it loads automatically.
+    return buildEmptyGapReport(userId);
   }
 
   // 4. Per-skill results from that session
@@ -188,9 +208,22 @@ async function getSkillGapAnalysis(userId) {
   );
 
   if (!quizSession || quizSession.status !== "Completed") {
-    const error = new Error("Student has not completed the initial quiz yet");
-    error.status = 409;
-    throw error;
+    // Initial assignment not completed yet — frontend shows empty data
+    // until the assessment is done, then it loads automatically.
+    return {
+      userId,
+      domainRole: user.domainRole
+        ? {
+            id: user.domainRole.domain_role_id,
+            name: user.domainRole.domain_name,
+          }
+        : { id: user.domain_role_id,
+
+          },
+      quiz: null,
+      codingAssessment: null,
+      skills: [],
+    };
   }
 
   const codingSession = await repo.codingSessions.findBySessionAndUser(
@@ -199,11 +232,27 @@ async function getSkillGapAnalysis(userId) {
   );
 
   if (!codingSession || codingSession.status !== "Completed") {
-    const error = new Error(
-      "Student has not completed the initial coding assessment yet"
+    // Coding part of the initial assignment still pending.
+    const latestSession = await repo.quizSessions.findLatestByUserAndAssessmentType(
+      userId,
+      "INITIAL"
     );
-    error.status = 409;
-    throw error;
+
+    return {
+      userId,
+      domainRole: latestSession?.domainRole
+        ? {
+            id: latestSession.domainRole.domain_role_id,
+            name: latestSession.domainRole.domain_name,
+          }
+        : { id: user.domain_role_id },
+      quiz: {
+        sessionId: latestSession?.session_id ?? quizSession.session_id,
+        percentage: 0,
+      },
+      codingAssessment: null,
+      skills: [],
+    };
   }
 
   const [requiredSkills, skillResults] = await Promise.all([

@@ -63,8 +63,8 @@ const router = express.Router();
  *         description: User has not selected a domain role
  *       404:
  *         description: User or domain skills not found
- *       409:
- *         description: Initial quiz or coding assessment is incomplete
+ *       200 (assignment incomplete):
+ *         description: If the initial quiz or coding assessment is not completed yet, returns 200 with empty data (quiz/codingAssessment = null, skills = []) instead of an error. The data loads automatically once the assessments are completed.
  */
 router.get("/:userId", async (req, res, next) => {
 	try {
