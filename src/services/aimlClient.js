@@ -147,6 +147,42 @@ async function checkCodePlagiarism(payload) {
 
 
 // ---------------------------------------------------------------------
+// 5. Mini Project Plagiarism Detection
+// ---------------------------------------------------------------------
+async function checkMiniProjectPlagiarism(args = {}) {
+  const submission = args.submission || {};
+  const comparisonSubmissions = args.comparison_submissions || args.comparisonSubmissions || [];
+
+  const normalizeFiles = (files = []) =>
+    (Array.isArray(files) ? files : []).map((file) => ({
+      path: String(file.path || file.filename || "main.py"),
+      language: String(
+        file.language ||
+        (String(file.path || file.filename).endsWith(".js") ? "javascript" : "python")
+      ),
+      code: String(file.code || file.content || ""),
+    }));
+
+  const payload = {
+    submission: {
+      submission_id: String(submission.submission_id || "sub_target"),
+      files: normalizeFiles(submission.files),
+    },
+    comparison_submissions: comparisonSubmissions.map((comparison, idx) => ({
+      submission_id: String(comparison.submission_id || `sub_comp_${idx + 1}`),
+      files: normalizeFiles(comparison.files),
+    })),
+  };
+
+  return callAIML(
+    "/api/plagiarism/mini-project/check",
+    payload,
+    "POST"
+  );
+}
+
+
+// ---------------------------------------------------------------------
 // 5. Descriptive Answer Evaluation (XLNet)
 // ---------------------------------------------------------------------
 async function evaluateDescriptiveAnswer({ questionText, studentAnswerText, referenceAnswerText }) {
@@ -233,28 +269,6 @@ async function analyzeSkillGap({ student_skills = [], required_skills = [] }) {
   }, "POST");
 }
 
-// ---------------------------------------------------------------------
-async function checkMiniProjectPlagiarism(payload) {
-  const normalizeFiles = (files = []) =>
-    files.map((f) => ({
-      path: f.path || f.filename || "main.py",
-      language: f.language || (f.path?.endsWith(".js") || f.filename?.endsWith(".js") ? "javascript" : "python"),
-      code: f.code || f.content || "",
-    }));
-
-  const normalized = {
-    submission: {
-      submission_id: payload.submission?.submission_id || "sub_target",
-      files: normalizeFiles(payload.submission?.files),
-    },
-    comparison_submissions: (payload.comparison_submissions || []).map((cs, idx) => ({
-      submission_id: cs.submission_id || `sub_comp_${idx + 1}`,
-      files: normalizeFiles(cs.files),
-    })),
-  };
-
-  return callAIML("/api/plagiarism/mini-project/check", normalized, "POST");
-}
 
 
 module.exports = {

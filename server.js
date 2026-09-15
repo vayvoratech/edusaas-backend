@@ -32,6 +32,7 @@ const dashboardRoutes = require("./src/routes/dashboard.routes");
 const rbacRoutes = require("./src/routes/rbac.routes");
 const domainRolesRoutes = require("./src/routes/domainRoles.routes");
 const communityRoutes = require("./src/routes/community.routes");
+const miniProjectRoutes = require("./src/routes/miniProject.routes")
 
 // Import error handling middleware
 const { notFound, errorHandler } = require("./src/middleware/errorHandler");
@@ -98,6 +99,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/rbac", rbacRoutes);
 app.use("/api/community", communityRoutes);
 app.use("/api/aiml", require("./src/routes/aiml.routes"));
+app.use("/api/mini-projects", miniProjectRoutes);
 
 const repo = require("./src/data");
 const { authRequired } = require("./src/middleware/auth");
@@ -122,5 +124,6 @@ const server = app.listen(port, () => {
   console.log(`EDU-SAAS backend running at http://localhost:${port}`);
   console.log(`Swagger docs:           http://localhost:${port}/api-docs`);
 });
+
 
 attachProctoringGateway(server)
