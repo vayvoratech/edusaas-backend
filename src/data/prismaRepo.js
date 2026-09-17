@@ -151,6 +151,7 @@ function learningProgressByEnrollment(
         id: u.id,
         name: u.name,
         email: u.email,
+        clerk_id: u.clerk_id,
 
         role_id: u.role_id,
         role: u.role?.name || null,
@@ -394,6 +395,15 @@ module.exports = {
     },
     findByEmail: async (email) =>
       mapUser(await prisma.user.findUnique({ where: { email }, include: userInclude })),
+
+    findByClerkId: async (clerkId) =>
+  mapUser(
+    await prisma.user.findUnique({
+      where: { clerk_id: clerkId },
+      include: userInclude,
+    })
+  ),
+
     deleteByClerkId: async (clerk_id) => 
       await prisma.user.delete({ where: { clerk_id } }),
     list: async (filters = {}) => {
@@ -1091,6 +1101,16 @@ module.exports = {
         where: { job_id_student_id: { job_id, student_id } },
 
       })),
+
+      findById: async (id) =>
+  mapApp(
+    await safeQuery(
+      prisma.application.findUnique({
+        where: { id },
+      })
+    )
+  ),
+  
     create: async (data) =>
       mapApp(await prisma.application.create({ data })),
 
@@ -2023,6 +2043,88 @@ module.exports = {
         data,
       })
     ),
+  },
+
+
+  assessmentReports: {
+    create: async (data) =>
+      prisma.assessmentReport.create({
+        data,
+      }),
+
+    findById: async (id) =>
+      prisma.assessmentReport.findUnique({
+        where: {
+          id,
+        },
+        include: {
+          student: true,
+          quiz_session: {
+            include: {
+              domainRole: true,
+              proctoring_events: {
+                orderBy: {
+                  created_at: "asc",
+                },
+              },
+            },
+          },
+        },
+      }),
+
+    findByStudentAndSession: async (student_id, quiz_session_id) =>
+      prisma.assessmentReport.findFirst({
+        where: {
+          student_id,
+          quiz_session_id,
+        },
+      }),
+
+    findByStudent: async (student_id) =>
+      prisma.assessmentReport.findMany({
+        where: {
+          student_id,
+        },
+        include: {
+          quiz_session: {
+            include: {
+              domainRole: true,
+            },
+          },
+        },
+        orderBy: {
+          created_at: "desc",
+        },
+      }),
+
+    list: async (status = null) =>
+      prisma.assessmentReport.findMany({
+        where: status ? { status } : undefined,
+        include: {
+          student: true,
+          quiz_session: {
+            include: {
+              domainRole: true,
+              proctoring_events: {
+                orderBy: {
+                  created_at: "asc",
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          created_at: "desc",
+        },
+      }),
+
+    update: async (id, data) =>
+      prisma.assessmentReport.update({
+        where: {
+          id,
+        },
+        data,
+      }),
   },
 
   codingQuestions: {

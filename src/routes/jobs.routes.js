@@ -584,10 +584,8 @@ const appliedStudentIds = new Set(
   )
 );
 
-const unappliedDomainStudents = domainStudents.filter(
-  (student) =>
-    !appliedStudentIds.has(String(student.id))
-);
+const unappliedDomainStudents = domainStudents;
+  
 console.log(
   "ALL STUDENTS:",
   students.map((s) => ({
@@ -622,7 +620,7 @@ console.log(
   }))
 );
   console.log("NEW CODE IS RUNNING");
-for (const student of unappliedDomainStudents) {
+for (const student of domainStudents) {
   console.log("PROCESSING:", student.email);
 
   const matchedSkillNames = [];
@@ -826,7 +824,7 @@ for (const student of unappliedDomainStudents) {
 
 const skillsInsightsMap = new Map();
 
-for (const student of unappliedDomainStudents) {
+for (const student of domainStudents) {
   const completedSession =
     await repo.quizSessions.findCompletedByUser(student.id);
 

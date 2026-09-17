@@ -56,6 +56,14 @@ router.post("/sync", async (req, res, next) => {
     console.log("[SYNC] Authenticated Clerk ID:", clerkId);
 
     const clerkUser = await clerkClient.users.getUser(clerkId);
+
+    if (clerkUser.unsafeMetadata?.account_status === "deleted") {
+  console.log("[SYNC] Deleted Clerk account attempted login:", clerkId);
+
+  return res.status(403).json({
+    error: "This account has been deleted and cannot be used.",
+  });
+}
     console.log("[SYNC] Clerk User Data:", JSON.stringify({
       id: clerkUser.id,
       emailAddresses: clerkUser.emailAddresses,
@@ -77,8 +85,27 @@ router.post("/sync", async (req, res, next) => {
     const domainRoleId = req.body.domainRoleId || clerkUser.unsafeMetadata.domain_role_id || null;
 
     console.log("[SYNC] Parsed Data - Email:", email, "Name:", name, "Username:", username, "Role:", role, "Domain:", domainRoleId);
+        let user = await repo.users.findByClerkId(clerkId);
 
-    let user = await repo.users.findByEmail(email);
+    if (user) {
+      console.log("[SYNC] Found existing PostgreSQL user by Clerk ID:", user.id, user.email);
+    } else {
+      user = await repo.users.findByEmail(email);
+
+      if (user) {
+        console.log("[SYNC] Found existing PostgreSQL user by email:", user.id, user.email);
+      }
+    }
+   
+// Block suspended users from receiving an EduSaaS access token
+if (user && user.status === "suspended") {
+  console.log("[SYNC] Suspended user attempted login:", user.id);
+
+  return res.status(403).json({
+    error: "Your account has been suspended. Please contact an administrator.",
+  });
+}
+
 
     if (!user) {
       console.log("[SYNC] Creating new user in postgres...");
@@ -120,12 +147,7 @@ router.post("/sync", async (req, res, next) => {
         updateData.clerk_id = clerkId;
       }
 
-      // If the frontend explicitly passed a role (e.g. from Onboarding screen),
-      // we must update Postgres to respect their choice!
-      if (req.body.role && req.body.role !== user.role) {
-        console.log(`[SYNC] Updating user role from ${user.role} to ${req.body.role}`);
-        updateData.role = req.body.role;
-      }
+      
 
       const effectiveRole = updateData.role || user.role;
       const targetDomain =

@@ -8,6 +8,7 @@ const router = express.Router();
 const { authRequired } = require('../middleware/auth')
 
 const { refreshJwtSecret } = require("../config/env");
+const { clerkClient } = require("@clerk/express");
 const {
   generateAccessToken,
   generateRefreshToken,
@@ -85,17 +86,67 @@ router.post("/register", async (req, res, next) => {
       }
     }
 
-    // Hash Password
-    const password_hash = await bcrypt.hash(password, 10);
+   // Hash Password
+const password_hash = await bcrypt.hash(password, 10);
 
-    // Create User
-    const user = await repo.users.create({
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      role,
-      password_hash,
-      domain_role_id: role === "student" ? domain_role_id : null,
-    });
+// Create Clerk User
+let clerkUser;
+
+try {
+  const emailValue = email.trim().toLowerCase();
+
+const usernameBase = emailValue
+  .split("@")[0]
+  .replace(/[^a-zA-Z0-9_]/g, "");
+
+const username = `${usernameBase}_${Date.now()}`;
+
+clerkUser = await clerkClient.users.createUser({
+  emailAddress: [emailValue],
+  password,
+  firstName: name.trim(),
+  username,
+  unsafeMetadata: {
+    role,
+    domain_role_id: role === "student" ? domain_role_id : null,
+  },
+});
+} catch (clerkErr) {
+  console.error("[REGISTER] Failed to create Clerk user:", clerkErr);
+
+  return res.status(400).json({
+    error:
+      clerkErr?.errors?.[0]?.longMessage ||
+      clerkErr?.errors?.[0]?.message ||
+      "Failed to create Clerk account",
+  });
+}
+
+// Create PostgreSQL User
+let user;
+
+try {
+  user = await repo.users.create({
+    name: name.trim(),
+    email: email.trim().toLowerCase(),
+    role,
+    password_hash,
+    clerk_id: clerkUser.id,
+    domain_role_id: role === "student" ? domain_role_id : null,
+  });
+} catch (dbErr) {
+  // Prevent an orphan Clerk account if PostgreSQL creation fails
+  try {
+    await clerkClient.users.deleteUser(clerkUser.id);
+  } catch (cleanupErr) {
+    console.error(
+      "[REGISTER] Failed to clean up Clerk user:",
+      cleanupErr.message
+    );
+  }
+
+  throw dbErr;
+}
 
     // Create Profile (Students)
     if (role === "student") {

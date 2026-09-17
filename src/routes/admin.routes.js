@@ -2,6 +2,7 @@ const express = require("express");
 const repo = require("../data");
 const { authRequired, permissionRequired } = require("../middleware/auth");
 const aimlClient = require("../services/aimlClient");
+const { clerkClient } = require("@clerk/express");
 
 const router = express.Router();
 
@@ -156,9 +157,38 @@ router.delete(
         });
       }
 
-      await repo.users.remove(req.params.id);
+console.log(
+  `[ADMIN] Deleting user ${user.id}, clerk_id: ${user.clerk_id}`
+);
 
-      return res.status(204).end();
+           // Mark the Clerk account as deleted before removing the PostgreSQL user
+if (user.clerk_id) {
+  try {
+    await clerkClient.users.updateUserMetadata(user.clerk_id, {
+      unsafeMetadata: {
+        ...(await clerkClient.users.getUser(user.clerk_id)).unsafeMetadata,
+        account_status: "deleted",
+      },
+    });
+
+    console.log(
+      `[ADMIN] Marked Clerk account as deleted: ${user.clerk_id}`
+    );
+  } catch (clerkErr) {
+    console.error(
+      "[ADMIN] Failed to mark Clerk account as deleted:",
+      clerkErr.message
+    );
+
+    return res.status(500).json({
+      error: "Could not delete user safely because the Clerk account could not be updated.",
+    });
+  }
+}
+
+await repo.users.remove(req.params.id);
+
+return res.status(204).end();
 
     } catch (err) {
       next(err);
@@ -240,6 +270,122 @@ router.get(
         return res.status(502).json({ error: "AI Dropout Prediction failed", details: aiErr.message });
       }
 
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * Assessment termination reports
+ *
+ * Admin can:
+ * - List submitted assessment reports
+ * - View a single report with termination evidence
+ * - Resolve/update a report
+ */
+
+router.get(
+  "/assessment-reports",
+  authRequired,
+  permissionRequired("reports:view"),
+  async (req, res, next) => {
+    try {
+      const status = req.query.status || null;
+
+      const reports = await repo.assessmentReports.list(status);
+
+      return res.json(reports);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.get(
+  "/assessment-reports/:id",
+  authRequired,
+  permissionRequired("reports:view"),
+  async (req, res, next) => {
+    try {
+      const reportId = Number(req.params.id);
+
+      if (!Number.isInteger(reportId)) {
+        return res.status(400).json({
+          error: "Invalid report ID.",
+        });
+      }
+
+      const report = await repo.assessmentReports.findById(reportId);
+
+      if (!report) {
+        return res.status(404).json({
+          error: "Assessment report not found.",
+        });
+      }
+
+      return res.json(report);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.patch(
+  "/assessment-reports/:id",
+  authRequired,
+  permissionRequired("reports:view"),
+  async (req, res, next) => {
+    try {
+      const reportId = Number(req.params.id);
+
+      if (!Number.isInteger(reportId)) {
+        return res.status(400).json({
+          error: "Invalid report ID.",
+        });
+      }
+
+      const { status, admin_notes } = req.body;
+
+      const allowedStatuses = [
+        "Pending",
+        "Under Review",
+        "Approved",
+        "Rejected",
+      ];
+
+      if (!status || !allowedStatuses.includes(status)) {
+        return res.status(400).json({
+          error: `Status must be one of: ${allowedStatuses.join(", ")}`,
+        });
+      }
+
+      const existingReport =
+        await repo.assessmentReports.findById(reportId);
+
+      if (!existingReport) {
+        return res.status(404).json({
+          error: "Assessment report not found.",
+        });
+      }
+
+      const report = await repo.assessmentReports.update(reportId, {
+        status,
+        admin_notes:
+          admin_notes !== undefined
+            ? String(admin_notes).trim() || null
+            : existingReport.admin_notes,
+        admin_id: req.user.sub,
+        resolved_at:
+          status === "Approved" || status === "Rejected"
+            ? new Date()
+            : null,
+      });
+
+      return res.json({
+        message: "Assessment report updated successfully.",
+        report,
+      });
     } catch (err) {
       next(err);
     }
