@@ -3471,15 +3471,40 @@ module.exports = {
   },
 
   insights: async () => {
-    const [users, courses, enrollments, jobs, applications, assessments] =
-      await Promise.all([
-        prisma.user.count(),
-        prisma.course.count(),
-        prisma.enrollment.count(),
-        prisma.job.count(),
-        prisma.application.count(),
-        prisma.assessment.findMany(),
-      ]);
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [
+      users,
+      courses,
+      enrollments,
+      jobs,
+      applications,
+      assessments,
+      activeCourses,
+      newCoursesThisMonth,
+      completedEnrollments,
+      newEnrollmentsThisMonth,
+      activeEnrollments,
+      openJobs,
+      newJobsThisMonth,
+    ] = await Promise.all([
+      prisma.user.count(),
+      prisma.course.count(),
+      prisma.enrollment.count(),
+      prisma.job.count(),
+      prisma.application.count(),
+      prisma.assessment.findMany(),
+      prisma.course.count({ where: { status: "active" } }),
+      prisma.course.count({ where: { created_at: { gte: startOfMonth } } }),
+      prisma.enrollment.count({ where: { status: "completed" } }),
+      prisma.enrollment.count({
+        where: { enrolled_at: { gte: startOfMonth } },
+      }),
+      prisma.enrollment.count({ where: { status: "active" } }),
+      prisma.job.count({ where: { status: "open" } }),
+      prisma.job.count({ where: { created_at: { gte: startOfMonth } } }),
+    ]);
 
     const avgScore =
       assessments.length === 0
@@ -3488,6 +3513,16 @@ module.exports = {
             assessments.reduce((s, a) => s + a.score, 0) /
               assessments.length
           );
+
+    const courseCompletionRate =
+      enrollments === 0
+        ? 0
+        : Math.round((completedEnrollments / enrollments) * 100);
+
+    const enrollmentActiveRate =
+      enrollments === 0
+        ? 0
+        : Math.round((activeEnrollments / enrollments) * 100);
 
     return {
       totals: {
@@ -3502,6 +3537,21 @@ module.exports = {
         average_score: avgScore,
       },
       top_missing_skills: [],
+      courses: {
+        active: activeCourses,
+        new_this_month: newCoursesThisMonth,
+        completion_rate: courseCompletionRate,
+      },
+      enrollments: {
+        total: enrollments,
+        new_this_month: newEnrollmentsThisMonth,
+        active_rate: enrollmentActiveRate,
+      },
+      jobs: {
+        open: openJobs,
+        new_this_month: newJobsThisMonth,
+        applications_received: applications,
+      },
     };
   },
 
