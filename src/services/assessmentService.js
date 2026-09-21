@@ -1560,7 +1560,7 @@ async function activateInitialAssessment(userId, sessionId) {
   const now = new Date();
 
   // Already ticking (e.g. a reconnect/double-click) — don't touch
-  // the deadline, just report the live remaining time.
+  // the deadline, just the live remaining time.
   if (quizSession.status === "In Progress") {
     if (!quizSession.deadline_at) {
       const error = new Error(
@@ -2919,16 +2919,29 @@ async function getAssessmentOverview(userId) {
   // Only look it up once the Initial Quiz has been completed.
   let codingSession = null;
 
-  if (initialSession?.status === "Completed") {
-    codingSession = await repo.codingSessions.findBySessionAndUser(
-      initialSession.session_id,
-      userId
-    );
-  }
+if (initialSession?.status === "Completed") {
+  codingSession = await repo.codingSessions.findBySessionAndUser(
+    initialSession.session_id,
+    userId
+  );
+}
 
-  return {
-    initialAssessment: {
-      status: initialSession?.status || "Not Started",
+const initialQuizCompleted = initialSession?.status === "Completed";
+const codingCompleted = codingSession?.status === "Completed";
+
+let initialAssessmentStatus = "Not Started";
+
+if (initialQuizCompleted && codingCompleted) {
+  initialAssessmentStatus = "Completed";
+} else if (initialQuizCompleted) {
+  initialAssessmentStatus = "In Progress";
+} else if (initialSession?.status) {
+  initialAssessmentStatus = initialSession.status;
+}
+
+return {
+  initialAssessment: {
+    status: initialAssessmentStatus,
       sessionId: initialSession?.session_id || null,
       questionsAnswered: initialSession?.questions_answered || 0,
       totalQuestions: initialSession?.total_questions || 0,

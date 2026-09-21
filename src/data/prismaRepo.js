@@ -1404,15 +1404,23 @@ module.exports = {
   },
 
   certificates: {
-    listByUser: async (user_id) =>
-      (await prisma.certificate.findMany({ where: { user_id } })).map(mapCert),
-    create: async (data) => mapCert(await prisma.certificate.create({
-      data: {
-        certificate_code: `EDU-${crypto.randomBytes(4).toString("hex").toUpperCase()}`,
-        ...data,
-      },
-    })),
-  },
+  listByUser: async (user_id) =>
+    (await prisma.certificate.findMany({ where: { user_id } })).map(mapCert),
+
+  findByUserAndCourse: async (user_id, course_id) =>
+    mapCert(
+      await prisma.certificate.findFirst({
+        where: { user_id, course_id },
+      })
+    ),
+
+  create: async (data) => mapCert(await prisma.certificate.create({
+    data: {
+      certificate_code: `EDU-${crypto.randomBytes(4).toString("hex").toUpperCase()}`,
+      ...data,
+    },
+  })),
+},
 
   achievements: {
     listByUser: async (user_id) =>
