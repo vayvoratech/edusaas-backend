@@ -1,6 +1,7 @@
 const express = require("express");
 const repo = require("../data");
 const { authRequired } = require("../middleware/auth");
+const { isValidSubscriptionPlan } = require("../config/subscriptionPlans");
 
 const router = express.Router();
 
@@ -54,14 +55,7 @@ router.post("/", authRequired, async (req, res, next) => {
       });
     }
 
-    const allowedPlans = [
-      "free",
-      "basic",
-      "pro",
-      "enterprise",
-    ];
-
-    if (!allowedPlans.includes(plan_type)) {
+    if (!isValidSubscriptionPlan(plan_type)) {
       return res.status(400).json({
         error: "Invalid subscription plan.",
       });

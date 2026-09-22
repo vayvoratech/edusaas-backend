@@ -16,6 +16,28 @@ const router = express.Router();
  *       200:
  *         description: Summary object
  */
+
+router.post(
+  "/generate",
+  authRequired,
+  permissionRequired("reports:generate"),
+  async (req, res) => {
+    try {
+      const type = req.body?.type || "Course Performance";
+
+      const report = await repo.reports.generate(type);
+
+      return res.status(201).json(report);
+    } catch (error) {
+      console.error("Report generation failed:", error);
+
+      return res.status(400).json({
+        message: error.message || "Failed to generate report",
+      });
+    }
+  }
+);
+
 router.get(
   "/summary",
   authRequired,

@@ -71,11 +71,15 @@ const PERMISSIONS = [
   { name: "users:profile:update", category: "Users", description: "Update user profiles" },
   { name: "admin:insights", category: "Admin", description: "Platform insights" },
   { name: "reports:view", category: "Admin", description: "Reports module" },
+  { name: "reports:generate", category: "Admin", description: "Generate reports" },
   { name: "settings:read", category: "Admin", description: "Read system settings" },
   { name: "settings:update", category: "Admin", description: "Update system settings" },
 
+  
   // Subscriptions
-  { name: "subscriptions:manage-mine", category: "Billing", description: "Manage own subscription" },
+{ name: "subscriptions:manage-mine", category: "Billing", description: "Manage own subscription" },
+{ name: "subscriptions:view-all", category: "Billing", description: "View all user subscriptions" },
+{ name: "subscriptions:manage", category: "Billing", description: "Manage user subscriptions" },
 
   // Profile
   { name: "profile:edit-own", category: "Profile", description: "Edit own profile" },

@@ -3,6 +3,7 @@ const repo = require("../data");
 const { authRequired, permissionRequired } = require("../middleware/auth");
 const aimlClient = require("../services/aimlClient");
 const { clerkClient } = require("@clerk/express");
+const { isValidSubscriptionPlan } = require("../config/subscriptionPlans");
 
 const router = express.Router();
 
@@ -196,6 +197,30 @@ return res.status(204).end();
   }
 );
 
+router.get(
+  "/recent-activity",
+  authRequired,
+  permissionRequired("admin:insights"),
+  async (req, res, next) => {
+    try {
+      const requestedLimit = Number(req.query?.limit);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(requestedLimit, 1), 20)
+        : 10;
+
+      const activities = await repo.adminRecentActivity(limit);
+
+      return res.json({
+        activities,
+        total: activities.length,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+
 /**
  * @openapi
  * /api/admin/insights:
@@ -223,6 +248,9 @@ router.get(
     }
   }
 );
+
+
+
 
 /**
  * @openapi
@@ -275,6 +303,113 @@ router.get(
     }
   }
 );
+
+
+
+router.get(
+  "/subscriptions",
+  authRequired,
+  permissionRequired("subscriptions:view-all"),
+  async (req, res, next) => {
+    try {
+      const subscriptions = await repo.subscriptions.listAll();
+      return res.json(subscriptions);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.get(
+  "/subscriptions/summary",
+  authRequired,
+  permissionRequired("subscriptions:view-all"),
+  async (req, res, next) => {
+    try {
+      const summary = await repo.subscriptions.summary();
+      return res.json(summary);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * Admin subscription management
+ *
+ * Admin can:
+ * - Change an existing subscription plan
+ * - Extend an existing subscription
+ */
+
+router.patch(
+  "/subscriptions/:id/plan",
+  authRequired,
+  permissionRequired("subscriptions:manage"),
+  async (req, res, next) => {
+    try {
+      const { plan_type } = req.body || {};
+
+      if (!plan_type) {
+        return res.status(400).json({
+          error: "plan_type is required.",
+        });
+      }
+
+      if (!isValidSubscriptionPlan(plan_type)) {
+        return res.status(400).json({
+          error: "Invalid subscription plan.",
+        });
+      }
+
+      const subscription = await repo.subscriptions.updatePlan(
+        req.params.id,
+        plan_type
+      );
+
+      return res.json(subscription);
+    } catch (err) {
+      if (err.message === "Subscription not found.") {
+        return res.status(404).json({ error: err.message });
+      }
+
+      next(err);
+    }
+  }
+);
+
+router.patch(
+  "/subscriptions/:id/extend",
+  authRequired,
+  permissionRequired("subscriptions:manage"),
+  async (req, res, next) => {
+    try {
+      const { months } = req.body || {};
+
+      if (!Number.isInteger(months) || months < 1 || months > 36) {
+        return res.status(400).json({
+          error: "months must be an integer between 1 and 36.",
+        });
+      }
+
+      const subscription = await repo.subscriptions.extend(
+        req.params.id,
+        months
+      );
+
+      return res.json(subscription);
+    } catch (err) {
+      if (err.message === "Subscription not found.") {
+        return res.status(404).json({ error: err.message });
+      }
+
+      next(err);
+    }
+  }
+);
+
+
+
 
 /**
  * Assessment termination reports
@@ -391,5 +526,19 @@ router.patch(
     }
   }
 );
+
+
+/**
+ * @openapi
+ * /api/admin/subscriptions:
+ *   get:
+ *     tags: [Admin]
+ *     summary: List all subscriptions
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Array of subscriptions
+ */
 
 module.exports = router;
