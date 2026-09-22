@@ -412,7 +412,7 @@ module.exports = {
     },
     create: async (data) => {
       // Translate `role` (name) → role_id if needed
-      let { role, role_id, permissions, ...rest } = data;
+      let { role, role_id, permissions, username, ...rest } = data;
       if (!role_id && role) {
         const r = await prisma.role.findUnique({ where: { name: role } });
         if (!r) throw new Error(`invalid role: ${role}`);
@@ -425,7 +425,7 @@ module.exports = {
       }));
     },
     update: async (id, data) => {
-      let { role, role_id, permissions, ...rest } = data;
+      let { role, role_id, permissions, username, ...rest } = data;
       if (!role_id && role) {
         const r = await prisma.role.findUnique({ where: { name: role } });
         if (!r) throw new Error(`invalid role: ${role}`);
