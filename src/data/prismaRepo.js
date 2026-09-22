@@ -1,4 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
+﻿const { PrismaClient } = require("@prisma/client");
 const crypto = require("crypto");
 
 const prisma = new PrismaClient();
@@ -16,6 +16,10 @@ const userInclude = {
   domainRole: true,
   profile: true,
 };
+
+
+const { getSubscriptionStatus } = require("../config/subscriptionStatus");
+
 
 const iso = (d) => (d instanceof Date ? d.toISOString() : d);
 
@@ -401,7 +405,7 @@ module.exports = {
       })).map(mapUser);
     },
     create: async (data) => {
-      // Translate `role` (name) → role_id if needed
+      // Translate `role` (name) â†’ role_id if needed
       let { role, role_id, permissions, ...rest } = data;
       if (!role_id && role) {
         const r = await prisma.role.findUnique({ where: { name: role } });
@@ -885,40 +889,405 @@ interviews: {
   },
 },
 
-  subscriptions: {
-    findByUserId: async (user_id) =>
-      mapSub(await prisma.subscription.findFirst({ where: { user_id } })),
-    upsert: async (user_id, data) => {
-      const existing = await prisma.subscription.findFirst({
-        where: { user_id },
-      });
+ subscriptions: {
+  findByUserId: async (user_id) => {
+  const subscription = await prisma.subscription.findFirst({
+    where: { user_id },
+  });
 
-      if (existing) {
-        return mapSub(
-          await prisma.subscription.update({
-            where: { id: existing.id },
-            data,
-          })
-        );
-      }
+  if (!subscription) {
+    return null;
+  }
 
+  return {
+    ...mapSub(subscription),
+    status: getSubscriptionStatus(
+      subscription.start_date,
+      subscription.end_date
+    ),
+  };
+},
+  upsert: async (user_id, data) => {
+    const existing = await prisma.subscription.findFirst({
+      where: { user_id },
+    });
+
+    if (existing) {
       return mapSub(
-        await prisma.subscription.create({
-          data: {
-            ...data,
-            user_id,
-          },
+        await prisma.subscription.update({
+          where: { id: existing.id },
+          data,
         })
       );
-    },
+    }
+
+    return mapSub(
+      await prisma.subscription.create({
+        data: {
+          ...data,
+          user_id,
+        },
+      })
+    );
   },
+
+  // Admin: read all subscriptions
+  listAll: async () => {
+    const rows = await prisma.subscription.findMany({
+      orderBy: { start_date: "desc" },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    const now = new Date();
+
+    return rows.map((row) => {
+      const start = new Date(row.start_date);
+      const end = new Date(row.end_date);
+
+      const status = getSubscriptionStatus(
+  row.start_date,
+  row.end_date
+);
+
+      return {
+        ...mapSub(row),
+        status,
+        user: row.user,
+      };
+    });
+  },
+
+  // Admin: subscription statistics
+  summary: async () => {
+    const rows = await prisma.subscription.findMany({
+      select: {
+        start_date: true,
+        end_date: true,
+        plan_type: true,
+      },
+    });
+
+    const now = new Date();
+
+    let active = 0;
+    let expired = 0;
+    let expiringSoon = 0;
+    let pending = 0;
+
+    const plans = {
+      free: 0,
+      basic: 0,
+      pro: 0,
+      enterprise: 0,
+    };
+
+    for (const row of rows) {
+      const start = new Date(row.start_date);
+      const end = new Date(row.end_date);
+
+     const status = getSubscriptionStatus(
+  row.start_date,
+  row.end_date
+);
+
+if (status === "Expired") {
+  expired++;
+} else if (status === "Expiring Soon") {
+  expiringSoon++;
+} else if (status === "Active") {
+  active++;
+} else {
+  pending++;
+}
+
+      const plan = String(row.plan_type || "").toLowerCase();
+
+      if (Object.prototype.hasOwnProperty.call(plans, plan)) {
+        plans[plan]++;
+      }
+    }
+
+    return {
+      total: rows.length,
+      active,
+      expiringSoon,
+      expired,
+      pending,
+      plans,
+    };
+  },
+
+    // Admin: change subscription plan
+  updatePlan: async (id, plan_type) => {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id },
+    });
+
+    if (!subscription) {
+      throw new Error("Subscription not found.");
+    }
+
+    const updated = await prisma.subscription.update({
+      where: { id },
+      data: { plan_type },
+    });
+
+    return {
+      ...mapSub(updated),
+      status: getSubscriptionStatus(
+        updated.start_date,
+        updated.end_date
+      ),
+    };
+  },
+
+  // Admin: extend subscription
+  extend: async (id, months) => {
+    const subscription = await prisma.subscription.findUnique({
+      where: { id },
+    });
+
+    if (!subscription) {
+      throw new Error("Subscription not found.");
+    }
+
+    const currentEnd = new Date(subscription.end_date);
+    const now = new Date();
+
+    // If already expired, extension starts from today.
+    const baseDate = currentEnd > now ? currentEnd : now;
+
+    const newEnd = new Date(baseDate);
+    newEnd.setMonth(newEnd.getMonth() + months);
+
+    const updated = await prisma.subscription.update({
+      where: { id },
+      data: { end_date: newEnd },
+    });
+
+    return {
+      ...mapSub(updated),
+      status: getSubscriptionStatus(
+        updated.start_date,
+        updated.end_date
+      ),
+    };
+  },
+},
 
   reports: {
-    list: async () => [],
-    listExports: async () => [],
-    summary: async () => {}
-  },
 
+ generate: async (type = "Course Performance") => {
+      if (type !== "Course Performance") {
+        throw new Error(`Unsupported report type: ${type}`);
+      }
+
+      const now = new Date();
+      const startOfMonth = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        1
+      );
+
+      const [
+        totalCourses,
+        activeCourses,
+        newCoursesThisMonth,
+        totalEnrollments,
+        completedEnrollments,
+        activeEnrollments,
+        droppedEnrollments,
+      ] = await Promise.all([
+        prisma.course.count(),
+
+        prisma.course.count({
+          where: { status: "active" },
+        }),
+
+        prisma.course.count({
+          where: {
+            created_at: {
+              gte: startOfMonth,
+            },
+          },
+        }),
+
+        prisma.enrollment.count(),
+
+        prisma.enrollment.count({
+          where: {
+            status: "completed",
+          },
+        }),
+
+        prisma.enrollment.count({
+          where: {
+            status: "active",
+          },
+        }),
+
+        prisma.enrollment.count({
+          where: {
+            status: {
+              in: ["dropped", "dropout", "failed"],
+            },
+          },
+        }),
+      ]);
+
+      const completionRate =
+        totalEnrollments === 0
+          ? 0
+          : Math.round(
+              (completedEnrollments / totalEnrollments) * 100
+            );
+
+      const activeEnrollmentRate =
+        totalEnrollments === 0
+          ? 0
+          : Math.round(
+              (activeEnrollments / totalEnrollments) * 100
+            );
+
+      const payload = {
+        totalCourses,
+        activeCourses,
+        newCoursesThisMonth,
+        totalEnrollments,
+        completedEnrollments,
+        activeEnrollments,
+        droppedEnrollments,
+        completionRate,
+        activeEnrollmentRate,
+        generatedAt: now.toISOString(),
+      };
+
+      const report = await prisma.report.create({
+        data: {
+          title: "Course Performance Report",
+          type: "Course Performance",
+          format: "JSON",
+          payload,
+        },
+      });
+
+      return mapReportRow(report);
+    },
+    list: async () => {
+      const rows = await prisma.report.findMany({
+        orderBy: { generated_at: "desc" },
+        take: 50,
+      });
+
+      return rows.map(mapReportRow);
+    },
+
+    listExports: async () => {
+      const rows = await prisma.report.findMany({
+        where: {
+          exported_at: {
+            not: null,
+          },
+        },
+        orderBy: { exported_at: "desc" },
+        take: 50,
+      });
+
+      return rows.map(mapReportRow);
+    },
+
+    summary: async () => {
+
+      const [
+        totalReports,
+        activeAlerts,
+        completedEnrollments,
+        droppedEnrollments,
+        newUsers,
+        activeUsers,
+      ] = await Promise.all([
+        prisma.report.count(),
+
+        prisma.notification.count({
+          where: {
+            read_status: false,
+            OR: [
+              { expires_at: null },
+              { expires_at: { gte: now } },
+            ],
+          },
+        }),
+
+        prisma.enrollment.count({
+          where: {
+            status: "completed",
+          },
+        }),
+
+        prisma.enrollment.count({
+          where: {
+            status: {
+              in: ["dropped", "dropout", "failed"],
+            },
+          },
+        }),
+
+        prisma.user.count({
+          where: {
+            created_at: {
+              gte: new Date(now.getFullYear(), now.getMonth(), 1),
+            },
+          },
+        }),
+
+        prisma.user.count({
+          where: {
+            last_login: {
+              gte: new Date(now.getFullYear(), now.getMonth(), 1),
+            },
+          },
+        }),
+      ]);
+
+      return {
+        totalReports,
+        activeAlerts,
+
+        // No authoritative data-quality metric currently exists.
+        dataAccuracy: null,
+
+        // No uptime-monitoring history currently exists.
+        systemUptime: null,
+
+        courseEngagement: [
+          {
+            month: now.toLocaleString("en-US", { month: "short" }),
+            completions: completedEnrollments,
+            dropouts: droppedEnrollments,
+          },
+        ],
+
+        userEngagement: [
+          {
+            channel: "New Users",
+            value: newUsers,
+          },
+          {
+            channel: "Active Users",
+            value: activeUsers,
+          },
+        ],
+      };
+    },
+  },
   settings: {
     all: async () => {
       const rows = await prisma.setting.findMany({ where: { scope: "system" } });
@@ -2343,6 +2712,215 @@ interviews: {
 
   },
 
+  adminRecentActivity: async (limit = 10) => {
+    const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 20);
+
+    const [enrollments, progress, tasks, achievements, certificates] =
+      await Promise.all([
+        prisma.enrollment.findMany({
+          take: safeLimit,
+          orderBy: { enrolled_at: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            course: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+          },
+        }),
+
+        prisma.progress.findMany({
+          where: {
+            completion_flag: true,
+            completed_at: { not: null },
+          },
+          take: safeLimit,
+          orderBy: { completed_at: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            lesson: {
+              select: {
+                id: true,
+                title: true,
+                course: {
+                  select: {
+                    id: true,
+                    title: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+
+        prisma.task.findMany({
+          where: {
+            status: "done",
+            completed_at: { not: null },
+          },
+          take: safeLimit,
+          orderBy: { completed_at: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            course: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+          },
+        }),
+
+        prisma.achievement.findMany({
+          take: safeLimit,
+          orderBy: { earned_at: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        }),
+
+        prisma.certificate.findMany({
+          take: safeLimit,
+          orderBy: { issued_date: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            course: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+          },
+        }),
+      ]);
+
+    const activities = [
+      ...enrollments.map((record) => ({
+        id: `enrollment-${record.id}`,
+        type: "enrollment",
+        title: `Enrolled in "${record.course?.title || "a course"}"`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.enrolled_at,
+      })),
+
+      ...progress.map((record) => ({
+        id: `lesson-${record.id}`,
+        type: "lesson",
+        title: `Completed lesson "${record.lesson?.title || "a lesson"}"`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.completed_at,
+        course: record.lesson?.course
+          ? {
+              id: record.lesson.course.id,
+              title: record.lesson.course.title,
+            }
+          : null,
+      })),
+
+      ...tasks.map((record) => ({
+        id: `task-${record.id}`,
+        type: "task",
+        title: `Completed task "${record.title}"`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.completed_at,
+        course: record.course
+          ? {
+              id: record.course.id,
+              title: record.course.title,
+            }
+          : null,
+      })),
+
+      ...achievements.map((record) => ({
+        id: `achievement-${record.id}`,
+        type: "achievement",
+        title: `Earned "${record.badge_name}" badge`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.earned_at,
+      })),
+
+      ...certificates.map((record) => ({
+        id: `certificate-${record.id}`,
+        type: "certificate",
+        title: `Received certificate for "${record.course?.title || "a course"}"`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.issued_date,
+        course: record.course
+          ? {
+              id: record.course.id,
+              title: record.course.title,
+            }
+          : null,
+      })),
+    ]
+      .filter((activity) => activity.when)
+      .sort((a, b) => new Date(b.when) - new Date(a.when))
+      .slice(0, safeLimit);
+
+    return activities;
+  },
   insights: async () => {
     const [users, courses, enrollments, jobs, applications, assessments] =
       await Promise.all([
@@ -3176,3 +3754,4 @@ const skillsInsights = Array.from(
   },
 
 };
+
