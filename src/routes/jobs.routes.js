@@ -19,9 +19,11 @@ const router = express.Router();
 // --------------------------------------------------
 const uploadResume = require("../middleware/uploadResume");
 const uploadApplication = require("../middleware/uploadApplication");
+
 const {
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
 } = require("@aws-sdk/client-s3");
 
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
@@ -541,8 +543,8 @@ console.log(
         (role) =>
           role.domain_name?.trim().toLowerCase() ===
           job.title?.trim().toLowerCase()
-      );console
-      .log("DOMAIN ROLES:", domainRoles);
+      );
+      console.log("DOMAIN ROLES:", domainRoles);
        console.log("MATCHED DOMAIN ROLE:", domainRole);
 
       if (!domainRole) {
@@ -577,6 +579,30 @@ const hasRequiredSkills = requiredSkills.length > 0;
 // --------------------------------------------------
 const applications =
   await repo.applications.listByJob(req.params.id);
+
+
+  const getApplicationData = async (studentId) => {
+  const application = applications.find(
+    (app) => String(app.student_id) === String(studentId)
+  );
+
+  if (!application) {
+    return {
+      application_id: null,
+      application_status: null,
+      interview: null,
+    };
+  }
+
+  const interview =
+    await repo.interviews.findByApplication(application.id);
+
+  return {
+    application_id: application.id,
+    application_status: application.status,
+    interview: interview || null,
+  };
+};
 
 const appliedStudentIds = new Set(
   applications.map((application) =>
@@ -619,9 +645,8 @@ console.log(
     domain_role_id: s.domain_role_id,
   }))
 );
-  console.log("NEW CODE IS RUNNING");
+
 for (const student of domainStudents) {
-  console.log("PROCESSING:", student.email);
 
   const matchedSkillNames = [];
   const missingSkillNames = [];
@@ -635,6 +660,8 @@ for (const student of domainStudents) {
       "NO REQUIRED SKILLS - INCLUDING STUDENT:",
       student.email
     );
+    const applicationData =
+  await getApplicationData(student.id);
 
     results.push({
       id: student.id,
@@ -772,42 +799,51 @@ for (const student of domainStudents) {
     fitCategory = "Possible Fit";
   }
 
-  let aiHiringMatch = null;
-  try {
-    const aiResp = await aimlClient.predictHiring({
-      experience_years: 0,
-      required_experience_years: Number(job.experience_required || 0),
-      skill_match_score: Math.min(Math.max(skillMatch / 100, 0), 1),
-      experience_match_score: 1.0,
-      domain_match: 1,
-      profile_score: skillMatch,
-    });
-    if (aiResp && aiResp.data) {
-      aiHiringMatch = aiResp.data;
-    }
-  } catch (aiErr) {
-    console.warn("[AIML Hiring Match] Fallback:", aiErr.message);
-  }
+const applicationData =
+  await getApplicationData(student.id);
 
-  results.push({
-    id: student.id,
-    name: student.name,
-    email: student.email,
-    domain_role_id: student.domain_role_id,
-
-    domain_role:
-      student.domainRole?.domain_name || job.title,
-
-    skill_match: skillMatch,
-    fit_category: fitCategory,
-    ai_hiring_match: aiHiringMatch,
-
-    matched_skills: matchedSkillNames,
-    missing_skills: missingSkillNames,
-    partial_skills: partialSkillNames,
-
-    eligible: true,
+let aiHiringMatch = null;
+try {
+  const aiResp = await aimlClient.predictHiring({
+    experience_years: 0,
+    required_experience_years: Number(job.experience_required || 0),
+    skill_match_score: Math.min(Math.max(skillMatch / 100, 0), 1),
+    experience_match_score: 1.0,
+    domain_match: 1,
+    profile_score: skillMatch,
   });
+
+  if (aiResp && aiResp.data) {
+    aiHiringMatch = aiResp.data;
+  }
+} catch (aiErr) {
+  console.warn("[AIML Hiring Match] Fallback:", aiErr.message);
+}
+  
+results.push({
+  id: student.id,
+  name: student.name,
+  email: student.email,
+  domain_role_id: student.domain_role_id,
+
+  domain_role:
+    student.domainRole?.domain_name || job.title,
+  skill_match: skillMatch,
+  fit_category: fitCategory,
+  ai_hiring_match: aiHiringMatch,
+  skill_match: skillMatch,
+  fit_category: fitCategory,
+
+  matched_skills: matchedSkillNames,
+  missing_skills: missingSkillNames,
+  partial_skills: partialSkillNames,
+
+  application_id: applicationData.application_id,
+  application_status: applicationData.application_status,
+  interview: applicationData.interview,
+
+  eligible: true,
+});
 
   console.log("MATCH RESULT:", {
     student: student.name,
@@ -1120,6 +1156,126 @@ router.delete(
  *         description: Application submitted
  */
 
+// --------------------------------------------------
+// Generate presigned B2 URL for student video upload
+// --------------------------------------------------
+router.post(
+  "/:id/application-video-upload-url",
+  authRequired,
+  async (req, res, next) => {
+    try {
+      if (req.user.role !== "student") {
+        return res.status(403).json({
+          error: "Only students can upload application videos.",
+        });
+      }
+
+      const job = await repo.jobs.findById(req.params.id);
+
+      if (!job) {
+        return res.status(404).json({
+          error: "Job not found.",
+        });
+      }
+
+      if (job.status !== "open") {
+        return res.status(400).json({
+          error: "This job is not accepting applications.",
+        });
+      }
+
+      if (
+        job.application_deadline &&
+        new Date(job.application_deadline) < new Date()
+      ) {
+        return res.status(400).json({
+          error: "The application deadline for this job has passed.",
+        });
+      }
+
+      const existing = await repo.applications.findOne(
+        job.id,
+        req.user.sub
+      );
+
+      if (existing) {
+        return res.status(409).json({
+          error: "You have already applied for this job.",
+        });
+      }
+
+      const {
+        file_name,
+        file_type,
+        file_size,
+      } = req.body || {};
+
+      if (!file_name || !file_type || !file_size) {
+        return res.status(400).json({
+          error: "Video file information is required.",
+        });
+      }
+
+      if (!String(file_type).startsWith("video/")) {
+        return res.status(400).json({
+          error: "Only video files are allowed.",
+        });
+      }
+
+      const size = Number(file_size);
+
+      if (!Number.isFinite(size) || size <= 0) {
+        return res.status(400).json({
+          error: "Invalid video file size.",
+        });
+      }
+
+      const maxVideoSize = 100 * 1024 * 1024;
+
+      if (size > maxVideoSize) {
+        return res.status(400).json({
+          error: "Video file must be 100 MB or smaller.",
+        });
+      }
+
+      const safeFileName = path
+        .basename(String(file_name))
+        .replace(/[^a-zA-Z0-9._-]/g, "_");
+
+      const videoKey =
+        `applications/${job.id}/${req.user.sub}/${Date.now()}-${safeFileName}`;
+
+      const command = new PutObjectCommand({
+        Bucket: process.env.B2_BUCKET_NAME,
+        Key: videoKey,
+        ContentType: file_type,
+      });
+
+      const uploadUrl = await getSignedUrl(
+        b2Client,
+        command,
+        {
+          expiresIn: 600,
+          signableHeaders: new Set(["content-type"]),
+        }
+      );
+
+      return res.json({
+        upload_url: uploadUrl,
+        key: videoKey,
+        file_name: file_name,
+        file_type: file_type,
+        file_size: size,
+        storage: "backblaze_b2",
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+
+
 router.post(
   "/:id/apply",
   authRequired,
@@ -1191,10 +1347,6 @@ if (req.body?.application_data) {
   }
 }
 
-console.log(
-  "BACKEND APPLICATION DATA:",
-  JSON.stringify(applicationData, null, 2)
-);
 
 // --------------------------------------------
 // Uploaded files
@@ -1255,33 +1407,77 @@ if (resumeFile) {
 // --------------------------------------------
 // Video → Backblaze B2
 // --------------------------------------------
+// --------------------------------------------
+// Video → Backblaze B2
+// --------------------------------------------
 
-if (!videoFile) {
-  return res.status(400).json({
-    error: "Video introduction is required.",
-  });
+if (videoFile) {
+  // Backward-compatible path:
+  // If an old client still sends the video to the backend,
+  // keep supporting it.
+  const videoKey =
+    `applications/${job.id}/${req.user.sub}/${Date.now()}-${videoFile.originalname}`;
+
+  await b2Client.send(
+    new PutObjectCommand({
+      Bucket: process.env.B2_BUCKET_NAME,
+      Key: videoKey,
+      Body: videoFile.buffer,
+      ContentType: videoFile.mimetype,
+    })
+  );
+
+  applicationData.video = {
+    file_name: videoFile.originalname,
+    file_type: videoFile.mimetype,
+    file_size: videoFile.size,
+    storage: "backblaze_b2",
+    key: videoKey,
+  };
+} else if (job.require_video){
+  const uploadedVideo = applicationData.video;
+
+  if (!uploadedVideo?.key) {
+    return res.status(400).json({
+      error: "Video introduction is required.",
+    });
+  }
+
+  const expectedPrefix =
+    `applications/${job.id}/${req.user.sub}/`;
+
+  if (!uploadedVideo.key.startsWith(expectedPrefix)) {
+    return res.status(403).json({
+      error: "Invalid application video.",
+    });
+  }
+
+  try {
+    const videoObject = await b2Client.send(
+      new HeadObjectCommand({
+        Bucket: process.env.B2_BUCKET_NAME,
+        Key: uploadedVideo.key,
+      })
+    );
+
+    applicationData.video = {
+      file_name: uploadedVideo.file_name,
+      file_type:
+        videoObject.ContentType ||
+        uploadedVideo.file_type ||
+        "video/webm",
+      file_size:
+        videoObject.ContentLength ||
+        uploadedVideo.file_size,
+      storage: "backblaze_b2",
+      key: uploadedVideo.key,
+    };
+  } catch (err) {
+    return res.status(400).json({
+      error: "Video upload was not completed. Please upload the video again.",
+    });
+  }
 }
-
-const videoKey =
-  `applications/${job.id}/${req.user.sub}/${Date.now()}-${videoFile.originalname}`;
-
-await b2Client.send(
-  new PutObjectCommand({
-    Bucket: process.env.B2_BUCKET_NAME,
-    Key: videoKey,
-    Body: videoFile.buffer,
-    ContentType: videoFile.mimetype,
-  })
-);
-
-applicationData.video = {
-  file_name: videoFile.originalname,
-  file_type: videoFile.mimetype,
-  file_size: videoFile.size,
-  storage: "backblaze_b2",
-  key: videoKey,
-};
-
 
       // --------------------------------------------
       // Skill match
@@ -1295,7 +1491,6 @@ applicationData.video = {
       // --------------------------------------------
       // Create application
       // --------------------------------------------
-
       const application =
         await repo.applications.create({
           job_id: job.id,
@@ -1308,7 +1503,6 @@ applicationData.video = {
       // --------------------------------------------
       // Notify employer
       // --------------------------------------------
-
       await repo.notifications.create({
         user_id: job.employer_id,
         type: "application",
@@ -1373,8 +1567,8 @@ router.get(
 router.get(
   "/:jobId/applications/:applicationId/video",
   authRequired,
-  permissionRequired("jobs:view-applications"),
 
+  permissionRequired("jobs:view-applications"),
   async (req, res, next) => {
     try {
       const { jobId, applicationId } = req.params;
@@ -1387,12 +1581,8 @@ router.get(
         });
       }
 
-      const isOwner = job.employer_id === req.user.sub;
-const isAdmin =
-  req.user.role === "admin" ||
-  req.user.role === "super_admin";
 
-const application =
+      const application =
   await repo.applications.findById(applicationId);
 
 if (!application || application.job_id !== jobId) {
@@ -1401,23 +1591,27 @@ if (!application || application.job_id !== jobId) {
   });
 }
 
-const isOwnApplication =
-  req.user.role === "student" &&
-  String(application.student_id) === String(req.user.sub);
+const isStudent = req.user.role === "student";
+const isOwner = job.employer_id === req.user.sub;
+const isAdmin =
+  req.user.role === "admin" ||
+  req.user.role === "super_admin";
 
-if (!isOwner && !isAdmin && !isOwnApplication) {
+// Student can only view their own application video
+if (isStudent && String(application.student_id) !== String(req.user.sub)) {
   return res.status(403).json({
     error: "You are not authorized to view this video.",
   });
 }
 
-      if (!application || application.job_id !== jobId) {
-        return res.status(404).json({
-          error: "Application not found.",
-        });
-      }
+// Only the job owner or admin can access other applicants' videos
+if (!isStudent && !isOwner && !isAdmin) {
+  return res.status(403).json({
+    error: "You are not authorized to view this video.",
+  });
+}
 
-      const videoKey =
+    const videoKey =
         application.application_data?.video?.key;
 
       if (!videoKey) {
@@ -1426,10 +1620,13 @@ if (!isOwner && !isAdmin && !isOwnApplication) {
         });
       }
 
-       const videoType =
-  application.application_data?.video?.file_name?.toLowerCase().endsWith(".webm")
-    ? "video/webm"
-    : application.application_data?.video?.file_type || "video/mp4";
+      const videoType =
+        application.application_data?.video?.file_name
+          ?.toLowerCase()
+          .endsWith(".webm")
+          ? "video/webm"
+          : application.application_data?.video?.file_type ||
+            "video/mp4";
 
       const command = new GetObjectCommand({
         Bucket: process.env.B2_BUCKET_NAME,
@@ -1562,6 +1759,7 @@ router.post(
       // 8. Online interviews should have a meeting link
       if (interviewType === "online") {
   if (!meeting_link || !String(meeting_link).trim()) {
+    
     return res.status(400).json({
       error: "Meeting link is required for an online interview.",
     });

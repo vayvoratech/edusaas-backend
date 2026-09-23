@@ -156,7 +156,6 @@ function learningProgressByEnrollment(
         name: u.name,
         email: u.email,
         clerk_id: u.clerk_id,
-
         role_id: u.role_id,
         role: u.role?.name || null,
 
@@ -399,6 +398,7 @@ module.exports = {
     },
     findByEmail: async (email) =>
       mapUser(await prisma.user.findUnique({ where: { email }, include: userInclude })),
+
 
     findByClerkId: async (clerkId) =>
   mapUser(
@@ -1098,125 +1098,130 @@ module.exports = {
     },
   },
 
-  applications: {
+applications: {
   findOne: async (job_id, student_id) =>
     mapApp(
       await prisma.application.findUnique({
         where: { job_id_student_id: { job_id, student_id } },
+      })
+    ),
 
-      })),
+  findById: async (id) =>
+    mapApp(
+      await safeQuery(
+        prisma.application.findUnique({
+          where: { id },
+        })
+      )
+    ),
 
-      findById: async (id) =>
-  mapApp(
-    await safeQuery(
-      prisma.application.findUnique({
+  create: async (data) =>
+    mapApp(await prisma.application.create({ data })),
+
+  update: async (id, data) =>
+    mapApp(
+      await safeQuery(
+        prisma.application.update({
+          where: { id },
+          data,
+        })
+      )
+    ),
+
+  listByJob: async (job_id) =>
+    (await prisma.application.findMany({ where: { job_id } })).map(mapApp),
+
+  listByJobWithStudent: async (job_id) =>
+    (
+      await prisma.application.findMany({
+        where: { job_id },
+        include: {
+          student: true,
+        },
+        orderBy: {
+          applied_at: "desc",
+        },
+      })
+    ).map((application) => ({
+      ...mapApp(application),
+      student_name: application.student?.name || null,
+      student_email: application.student?.email || null,
+    })),
+
+  listByStudent: async (student_id) => {
+    if (!student_id) return [];
+
+    const isUUID =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        student_id
+      );
+
+    let targetId = student_id;
+
+    if (!isUUID) {
+      const student = await prisma.user.findUnique({
+        where: { clerk_id: student_id },
+        select: { id: true },
+      });
+
+      if (!student) return [];
+
+      targetId = student.id;
+    }
+
+    return (
+      await prisma.application.findMany({
+        where: {
+          student_id: targetId,
+        },
+        orderBy: {
+          applied_at: "desc",
+        },
+      })
+    ).map(mapApp);
+  },
+},
+
+interviews: {
+  findById: async (id) =>
+    safeQuery(
+      prisma.interview.findUnique({
         where: { id },
       })
-    )
-  ),
-  
-    create: async (data) =>
-      mapApp(await prisma.application.create({ data })),
+    ),
 
-    listByJob: async (job_id) =>
-      (await prisma.application.findMany({ where: { job_id } })).map(mapApp),
+  findByApplication: async (application_id) =>
+    safeQuery(
+      prisma.interview.findFirst({
+        where: { application_id },
+        orderBy: { scheduled_at: "desc" },
+      })
+    ),
 
-    listByJobWithStudent: async (job_id) =>
-      (
-        await prisma.application.findMany({
-          where: { job_id },
-          include: {
-            student: true,
-          },
-          orderBy: {
-            applied_at: "desc",
-          },
-        })
-      ).map((application) => ({
-        ...mapApp(application),
-        student_name: application.student?.name || null,
-        student_email: application.student?.email || null,
-      })),
+  create: async (data) =>
+    safeQuery(
+      prisma.interview.create({
+        data,
+      })
+    ),
 
-    listByStudent: async (student_id) => {
-      if (!student_id) return [];
+  update: async (id, data) =>
+    safeQuery(
+      prisma.interview.update({
+        where: { id },
+        data,
+      })
+    ),
 
-      const isUUID =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-          student_id
-        );
-
-      let targetId = student_id;
-
-      if (!isUUID) {
-        const student = await prisma.user.findUnique({
-          where: { clerk_id: student_id },
-          select: { id: true },
-        });
-
-        if (!student) return [];
-
-        targetId = student.id;
-      }
-
-      return (
-        await prisma.application.findMany({
-          where: { student_id: targetId },
-        })
-      ).map(mapApp);
-    },
-
-    update: async (id, data) =>
-      mapApp(
-        await safeQuery(
-          prisma.application.update({
-            where: { id },
-            data,
-          })
-        )
-      ),
-  },
-
-  interviews: {
-    findById: async (id) =>
-      safeQuery(
-        prisma.interview.findUnique({
+  remove: async (id) =>
+    !!(
+      await safeQuery(
+        prisma.interview.delete({
           where: { id },
         })
-      ),
-
-    findByApplication: async (application_id) =>
-      safeQuery(
-        prisma.interview.findFirst({
-          where: { application_id },
-          orderBy: { scheduled_at: "desc" },
-        })
-      ),
-
-    create: async (data) =>
-      safeQuery(
-        prisma.interview.create({
-          data,
-        })
-      ),
-
-    update: async (id, data) =>
-      safeQuery(
-        prisma.interview.update({
-          where: { id },
-          data,
-        })
-      ),
-
-    remove: async (id) =>
-      !!(
-        await safeQuery(
-          prisma.interview.delete({
-            where: { id },
-          })
-        )
-      ),
-  },
+      )
+    ),
+},
 
   notifications: {
   listByUser: async (user_id, limit = 50) =>
@@ -2327,7 +2332,6 @@ if (status === "Expired") {
         },
       });
     },
-  
   findActiveWithResumeData: async (user_id, assessment_type = "INITIAL") =>
     prisma.quizSession.findFirst({
       where: {
@@ -3953,6 +3957,7 @@ if (status === "Expired") {
     const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 20);
 
     const [enrollments, progress, tasks, achievements, certificates] =
+
       await Promise.all([
         prisma.enrollment.findMany({
           take: safeLimit,
@@ -4158,90 +4163,299 @@ if (status === "Expired") {
 
     return activities;
   },
-  insights: async () => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const [
+  insights: async () => {
+    const [users, courses, enrollments, jobs, applications, assessments] =
+      await Promise.all([
+        prisma.enrollment.findMany({
+          take: safeLimit,
+          orderBy: { enrolled_at: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            course: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+          },
+        }),
+
+        prisma.progress.findMany({
+          where: {
+            completion_flag: true,
+            completed_at: { not: null },
+          },
+          take: safeLimit,
+          orderBy: { completed_at: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            lesson: {
+              select: {
+                id: true,
+                title: true,
+                course: {
+                  select: {
+                    id: true,
+                    title: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+
+        prisma.task.findMany({
+          where: {
+            status: "done",
+            completed_at: { not: null },
+          },
+          take: safeLimit,
+          orderBy: { completed_at: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            course: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+          },
+        }),
+
+        prisma.achievement.findMany({
+          take: safeLimit,
+          orderBy: { earned_at: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        }),
+
+        prisma.certificate.findMany({
+          take: safeLimit,
+          orderBy: { issued_date: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            course: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+          },
+        }),
+      ]);
+
+    const activities = [
+      ...enrollments.map((record) => ({
+        id: `enrollment-${record.id}`,
+        type: "enrollment",
+        title: `Enrolled in "${record.course?.title || "a course"}"`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.enrolled_at,
+      })),
+
+      ...progress.map((record) => ({
+        id: `lesson-${record.id}`,
+        type: "lesson",
+        title: `Completed lesson "${record.lesson?.title || "a lesson"}"`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.completed_at,
+        course: record.lesson?.course
+          ? {
+              id: record.lesson.course.id,
+              title: record.lesson.course.title,
+            }
+          : null,
+      })),
+
+      ...tasks.map((record) => ({
+        id: `task-${record.id}`,
+        type: "task",
+        title: `Completed task "${record.title}"`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.completed_at,
+        course: record.course
+          ? {
+              id: record.course.id,
+              title: record.course.title,
+            }
+          : null,
+      })),
+
+      ...achievements.map((record) => ({
+        id: `achievement-${record.id}`,
+        type: "achievement",
+        title: `Earned "${record.badge_name}" badge`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.earned_at,
+      })),
+
+      ...certificates.map((record) => ({
+        id: `certificate-${record.id}`,
+        type: "certificate",
+        title: `Received certificate for "${record.course?.title || "a course"}"`,
+        user: record.user
+          ? {
+              id: record.user.id,
+              name: record.user.name,
+              email: record.user.email,
+            }
+          : null,
+        when: record.issued_date,
+        course: record.course
+          ? {
+              id: record.course.id,
+              title: record.course.title,
+            }
+          : null,
+      })),
+    ]
+      .filter((activity) => activity.when)
+      .sort((a, b) => new Date(b.when) - new Date(a.when))
+      .slice(0, safeLimit);
+
+    return activities;
+  },
+  
+  insights: async () => {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const [
+    users,
+    courses,
+    enrollments,
+    jobs,
+    applications,
+    assessments,
+    activeCourses,
+    newCoursesThisMonth,
+    completedEnrollments,
+    newEnrollmentsThisMonth,
+    activeEnrollments,
+    openJobs,
+    newJobsThisMonth,
+  ] = await Promise.all([
+    prisma.user.count(),
+    prisma.course.count(),
+    prisma.enrollment.count(),
+    prisma.job.count(),
+    prisma.application.count(),
+    prisma.assessment.findMany(),
+    prisma.course.count({ where: { status: "active" } }),
+    prisma.course.count({ where: { created_at: { gte: startOfMonth } } }),
+    prisma.enrollment.count({ where: { status: "completed" } }),
+    prisma.enrollment.count({
+      where: { enrolled_at: { gte: startOfMonth } },
+    }),
+    prisma.enrollment.count({ where: { status: "active" } }),
+    prisma.job.count({ where: { status: "open" } }),
+    prisma.job.count({ where: { created_at: { gte: startOfMonth } } }),
+  ]);
+
+  const avgScore =
+    assessments.length === 0
+      ? 0
+      : Math.round(
+          assessments.reduce((s, a) => s + a.score, 0) /
+            assessments.length
+        );
+
+  const courseCompletionRate =
+    enrollments === 0
+      ? 0
+      : Math.round((completedEnrollments / enrollments) * 100);
+
+  const enrollmentActiveRate =
+    enrollments === 0
+      ? 0
+      : Math.round((activeEnrollments / enrollments) * 100);
+
+  return {
+    totals: {
       users,
       courses,
       enrollments,
       jobs,
       applications,
-      assessments,
-      activeCourses,
-      newCoursesThisMonth,
-      completedEnrollments,
-      newEnrollmentsThisMonth,
-      activeEnrollments,
-      openJobs,
-      newJobsThisMonth,
-    ] = await Promise.all([
-      prisma.user.count(),
-      prisma.course.count(),
-      prisma.enrollment.count(),
-      prisma.job.count(),
-      prisma.application.count(),
-      prisma.assessment.findMany(),
-      prisma.course.count({ where: { status: "active" } }),
-      prisma.course.count({ where: { created_at: { gte: startOfMonth } } }),
-      prisma.enrollment.count({ where: { status: "completed" } }),
-      prisma.enrollment.count({
-        where: { enrolled_at: { gte: startOfMonth } },
-      }),
-      prisma.enrollment.count({ where: { status: "active" } }),
-      prisma.job.count({ where: { status: "open" } }),
-      prisma.job.count({ where: { created_at: { gte: startOfMonth } } }),
-    ]);
-
-    const avgScore =
-      assessments.length === 0
-        ? 0
-        : Math.round(
-            assessments.reduce((s, a) => s + a.score, 0) /
-              assessments.length
-          );
-
-    const courseCompletionRate =
-      enrollments === 0
-        ? 0
-        : Math.round((completedEnrollments / enrollments) * 100);
-
-    const enrollmentActiveRate =
-      enrollments === 0
-        ? 0
-        : Math.round((activeEnrollments / enrollments) * 100);
-
-    return {
-      totals: {
-        users,
-        courses,
-        enrollments,
-        jobs,
-        applications,
-      },
-      assessments: {
-        count: assessments.length,
-        average_score: avgScore,
-      },
-      top_missing_skills: [],
-      courses: {
-        active: activeCourses,
-        new_this_month: newCoursesThisMonth,
-        completion_rate: courseCompletionRate,
-      },
-      enrollments: {
-        total: enrollments,
-        new_this_month: newEnrollmentsThisMonth,
-        active_rate: enrollmentActiveRate,
-      },
-      jobs: {
-        open: openJobs,
-        new_this_month: newJobsThisMonth,
-        applications_received: applications,
-      },
-    };
-  },
+    },
+    assessments: {
+      count: assessments.length,
+      average_score: avgScore,
+    },
+    top_missing_skills: [],
+    courses: {
+      active: activeCourses,
+      new_this_month: newCoursesThisMonth,
+      completion_rate: courseCompletionRate,
+    },
+    enrollments: {
+      total: enrollments,
+      new_this_month: newEnrollmentsThisMonth,
+      active_rate: enrollmentActiveRate,
+    },
+    jobs: {
+      open: openJobs,
+      new_this_month: newJobsThisMonth,
+      applications_received: applications,
+    },
+  };
+},
 
   educatorInsights: async (educator_id, course_id = null) => {
     let targetEducatorId = educator_id;

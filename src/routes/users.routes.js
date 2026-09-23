@@ -84,28 +84,55 @@ router.post("/sync", async (req, res, next) => {
     const role = req.body.role || clerkUser.unsafeMetadata.role || 'student';
     const domainRoleId = req.body.domainRoleId || clerkUser.unsafeMetadata.domain_role_id || null;
 
-    console.log("[SYNC] Parsed Data - Email:", email, "Name:", name, "Username:", username, "Role:", role, "Domain:", domainRoleId);
-        let user = await repo.users.findByClerkId(clerkId);
+console.log(
+  "[SYNC] Parsed Data - Email:",
+  email,
+  "Name:",
+  name,
+  "Username:",
+  username,
+  "Role:",
+  role,
+  "Domain:",
+  domainRoleId
+);
 
-    if (user) {
-      console.log("[SYNC] Found existing PostgreSQL user by Clerk ID:", user.id, user.email);
-    } else {
-      user = await repo.users.findByEmail(email);
+let user = await repo.users.findByClerkId(clerkId);
 
-      if (user) {
-        console.log("[SYNC] Found existing PostgreSQL user by email:", user.id, user.email);
-      }
-    }
-   
-// Block suspended users from receiving an EduSaaS access token
-if (user && user.status === "suspended") {
-  console.log("[SYNC] Suspended user attempted login:", user.id);
+console.log("[SYNC] findByClerkId result:", user);
 
-  return res.status(403).json({
-    error: "Your account has been suspended. Please contact an administrator.",
-  });
+if (user) {
+  console.log(
+    "[SYNC] Found existing PostgreSQL user by Clerk ID:",
+    user.id,
+    user.email
+  );
+} else {
+  console.log("[SYNC] Clerk ID not found, checking email...");
+
+  user = await repo.users.findByEmail(email);
+
+  if (user) {
+    console.log(
+      "[SYNC] Found existing PostgreSQL user by email:",
+      user.id,
+      user.email
+    );
+  }
 }
 
+// Block suspended users from receiving an EduSaaS access token
+if (user && user.status === "suspended") {
+  console.log(
+    "[SYNC] Suspended user attempted login:",
+    user.id
+  );
+
+  return res.status(403).json({
+    error:
+      "Your account has been suspended. Please contact an administrator.",
+  });
+}
 
     if (!user) {
       console.log("[SYNC] Creating new user in postgres...");
@@ -296,58 +323,82 @@ router.get("/me", authRequired, async (req, res, next) => {
  *     summary: Fetch user profile
  *     security: [{ bearerAuth: [] }]
  */
+
 router.get("/:id", authRequired, async (req, res, next) => {
   try {
-const targetUserId = req.params.id === "me" ? req.user.sub : req.params.id;
+    const targetUserId =
+      req.params.id === "me" ? req.user.sub : req.params.id;
 
-const isOwner = req.user.sub === targetUserId;
-const isAdmin =
-  req.user.role === "admin" ||
-  req.user.role === "super_admin";
+    // Owner can view their own profile.
+    const isOwner =
+      String(req.user.sub) === String(targetUserId);
 
-let isAuthorizedEmployer = false;
+    // Admins can view any profile.
+    const isAdmin =
+      req.user.role === "admin" ||
+      req.user.role === "super_admin";
 
-if (req.user.role === "employer" && !isOwner) {
-  const employerJobs = await repo.jobs.list({
-    employer_id: req.user.sub,
-  });
+    // Employers can view authorized student candidates.
+    let isAuthorizedEmployer = false;
 
-  const candidate = await repo.users.findById(targetUserId);
+    if (req.user.role === "employer" && !isOwner) {
+      const employerJobs = await repo.jobs.list({
+        employer_id: req.user.sub,
+      });
 
-  if (candidate?.role === "student") {
-    const candidateApplications =
-      await repo.applications.listByStudent(candidate.id);
+      const candidate =
+        await repo.users.findById(targetUserId);
 
-    isAuthorizedEmployer = candidateApplications.some((application) =>
-      employerJobs.some(
-        (job) =>
-          String(job.id) === String(application.job_id) &&
-          String(job.employer_id) === String(req.user.sub)
-      )
-    );
-  }
-}
+      if (candidate?.role === "student") {
+        // Authorization path 1:
+        // Candidate belongs to a domain used by one of the employer's jobs.
+        const hasMatchingDomainJob = employerJobs.some(
+          (job) =>
+            String(candidate.domain_role_id) ===
+            String(job.domain_role_id)
+        );
 
-if (!isOwner && !isAdmin && !isAuthorizedEmployer) {
-  return res.status(403).json({
-    error: "You are not authorized to view this profile.",
-  });
-}
+        // Authorization path 2:
+        // Candidate has applied to one of the employer's jobs.
+        const candidateApplications =
+          await repo.applications.listByStudent(candidate.id);
 
-const user = await repo.users.findById(targetUserId);
+        const hasEmployerApplication =
+          candidateApplications.some((application) =>
+            employerJobs.some(
+              (job) =>
+                String(job.id) === String(application.job_id) &&
+                String(job.employer_id) === String(req.user.sub)
+            )
+          );
+
+        isAuthorizedEmployer =
+          hasMatchingDomainJob || hasEmployerApplication;
+      }
+    }
+
+    if (!isOwner && !isAdmin && !isAuthorizedEmployer) {
+      return res.status(403).json({
+        error: "You are not authorized to view this profile.",
+      });
+    }
+
+    const user =
+      await repo.users.findById(targetUserId);
+
     if (!user) {
       return res.status(404).json({
         error: "User not found.",
       });
     }
 
-    const profile = await repo.profiles.findByUserId(user.id);
+    const profile =
+      await repo.profiles.findByUserId(user.id);
 
     return res.json({
       ...sanitizeUser(user),
       profile: profile || null,
     });
-
   } catch (err) {
     next(err);
   }

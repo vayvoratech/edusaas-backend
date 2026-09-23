@@ -123,6 +123,7 @@ model Profile {
   institution                  String?
   company                      String?
   preferences                  Json?
+  resume                       Json?
   initial_assessment_completed Boolean @default(false)
   user                         User    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_profile_user")
 
@@ -324,6 +325,7 @@ model plagiarism_matches {
   @@schema("education")
 }
 
+
 model Job {
   id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   employer_id              String   @db.Uuid
@@ -373,16 +375,16 @@ model JobSkill {
 }
 
 model Application {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  job_id           String   @db.Uuid
-  student_id       String   @db.Uuid
-  status           String   @default("submitted") @db.VarChar(50)
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  job_id           String      @db.Uuid
+  student_id       String      @db.Uuid
+  status           String      @default("submitted") @db.VarChar(50)
   skill_match      Float?
-  applied_at       DateTime @default(now()) @db.Timestamp(6)
+  applied_at       DateTime    @default(now()) @db.Timestamp(6)
   application_data Json?
 
-  job        Job         @relation(fields: [job_id], references: [id], onDelete: Cascade, map: "fk_application_job")
-  student    User        @relation(fields: [student_id], references: [id], onDelete: Cascade, map: "fk_application_student")
+  job        Job         @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_job")
+  student    User        @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_application_student")
   interviews Interview[]
 
   @@unique([job_id, student_id], map: "uq_application")
@@ -656,6 +658,7 @@ model DomainRole {
   @@schema("education")
 }
 
+
 model Skill {
   skill_id    Int       @id @default(autoincrement())
   skill_name  String    @unique @db.VarChar(100)
@@ -727,6 +730,7 @@ model QuizSession {
   session_id           Int                   @id @default(autoincrement())
   user_id              String                @db.Uuid
   domain_role_id       String                @db.Uuid
+  assessment_type      assessment_type       @default(INITIAL)
   start_time           DateTime              @default(now()) @db.Timestamp(6)
   end_time             DateTime?             @db.Timestamp(6)
   status               String                @default("In Progress") @db.VarChar(20)
@@ -737,7 +741,6 @@ model QuizSession {
   current_question_id  Int?
   remaining_seconds    Int?
   paused_at            DateTime?             @db.Timestamp(6)
-  assessment_type      assessment_type       @default(INITIAL)
   proctoring_events    proctoring_events[]
   assessmentReports    AssessmentReport[]
   domainRole           DomainRole            @relation(fields: [domain_role_id], references: [domain_role_id], onUpdate: NoAction)
@@ -749,10 +752,10 @@ model QuizSession {
 
   @@index([current_skill_id], map: "idx_quiz_sessions_current_skill")
   @@index([current_question_id], map: "idx_quiz_sessions_current_question")
+  @@index([user_id, assessment_type, status], map: "idx_quiz_sessions_user_assessment_status")
   @@index([domain_role_id], map: "idx_quiz_sessions_domain_role")
   @@index([status], map: "idx_quiz_sessions_status")
   @@index([user_id], map: "idx_quiz_sessions_user")
-  @@index([user_id, assessment_type, status], map: "idx_quiz_sessions_user_assessment_status")
   @@map("quiz_sessions")
   @@schema("education")
 }
