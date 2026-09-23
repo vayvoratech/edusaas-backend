@@ -466,7 +466,91 @@ router.post("/logout", authRequired, async (req, res, next) => {
     next(err);
   }
 });
+/**
+ * @openapi
+ * /api/auth/change-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Change password for authenticated user
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - currentPassword
+ *               - newPassword
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *               newPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *       400:
+ *         description: Validation error
+ *       401:
+ *         description: Authentication or current password error
+ */
+router.post("/change-password", authRequired, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
 
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        error: "Current password and new password are required",
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        error: "New password must be at least 8 characters long",
+      });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        error: "New password must be different from current password",
+      });
+    }
+
+    const user = await repo.users.findById(req.user.id);
+
+    if (!user) {
+      return res.status(401).json({
+        error: "User not found",
+      });
+    }
+
+    const currentPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.password_hash
+    );
+
+    if (!currentPasswordValid) {
+      return res.status(401).json({
+        error: "Current password is incorrect",
+      });
+    }
+
+    const password_hash = await bcrypt.hash(newPassword, 10);
+
+    await repo.users.updatePassword(
+      user.id,
+      password_hash
+    );
+
+    return res.status(200).json({
+      message: "Password changed successfully",
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 router.post("/forgot-password", async (req, res, next) => {
   try {
     const { email } = req.body || {};
