@@ -1587,6 +1587,8 @@ if (status === "Expired") {
     },
 
     summary: async () => {
+      
+      const now = new Date();
 
       const [
         totalReports,
