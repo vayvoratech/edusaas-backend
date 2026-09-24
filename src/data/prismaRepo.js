@@ -306,8 +306,8 @@ module.exports = {
           OR: [{ requesterId: userId }, { receiverId: userId }]
         },
         include: {
-          requester: { select: { id: true, name: true, username: true, email: true, role: true } },
-          receiver: { select: { id: true, name: true, username: true, email: true, role: true } }
+          requester: { select: { id: true, name: true, email: true, role: true } },
+          receiver: { select: { id: true, name: true, email: true, role: true } }
         }
       });
     },
@@ -315,7 +315,7 @@ module.exports = {
       return await prisma.connection.findMany({
         where: { receiverId: userId, status: "pending" },
         include: {
-          requester: { select: { id: true, name: true, username: true, email: true, role: true } }
+          requester: { select: { id: true, name: true, email: true, role: true } }
         }
       });
     },
