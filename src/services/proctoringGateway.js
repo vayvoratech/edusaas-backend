@@ -153,13 +153,13 @@ function connectToFraudAI() {
       aiSocket.terminate();
 
       const error = new Error(
-        "Fraud AI connection timeout."
+        "Fraud AI connection timeout (AI service took too long to wake up)."
       );
 
       error.code = "AI_CONNECTION_TIMEOUT";
 
       reject(error);
-    }, 45000);
+    }, 65000);
 
     aiSocket.once("open", () => {
       clearTimeout(timeout);
@@ -772,6 +772,10 @@ function attachProctoringGateway(server) {
               "[proctoring] Start failed:",
               error
             );
+
+            if (sessionId) {
+              activeSessions.delete(sessionId);
+            }
 
             sendJson(clientSocket, {
               type:
