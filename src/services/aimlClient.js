@@ -3,6 +3,10 @@
 const { aimlServiceUrl } = require("../config/env");
 const crypto = require("crypto");
 
+const AIML_TIMEOUT_MS = Number(
+  process.env.AIML_TIMEOUT_MS || 60000
+);
+
 /**
  * Converts a string ID (like a Clerk user_2Q...) into a stable positive Integer
  */
@@ -47,7 +51,7 @@ async function callAIML(
   // the main application request indefinitely.
   const timeout = setTimeout(() => {
     controller.abort();
-  }, 5000);
+  }, AIML_TIMEOUT_MS);
 
   const options = {
     method,
@@ -91,7 +95,7 @@ async function callAIML(
   } catch (error) {
     if (error.name === "AbortError") {
       console.error(
-        `[AIML Client Timeout] ${endpoint}: AI service did not respond within 5 seconds`
+        `[AIML Client Timeout] ${endpoint}: AI service did not respond within ${AIML_TIMEOUT_MS / 1000} seconds`
       );
     } else {
       console.error(

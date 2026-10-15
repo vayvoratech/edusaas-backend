@@ -83,46 +83,7 @@ async function startInitialAssessment(userId) {
 };
     }
 
- // ------------------------------------------------------------
-// CODING ASSESSMENT WAS TERMINATED
-// ------------------------------------------------------------
-// The old quiz + coding session must remain as history.
-// Student can restart only after Admin approves the report.
-if (
-  codingSession &&
-  codingSession.status === "Terminated"
-) {
-  const report =
-    await repo.assessmentReports.findByStudentAndSession(
-      userId,
-      existingSession.session_id,
-      "INITIAL_CODING"
-    );
 
-  if (!report || report.status !== "Approved") {
-    const error = new Error(
-      report
-        ? `This coding assessment cannot be restarted until your report is approved. Current status: ${report.status}.`
-        : "This coding assessment has been terminated. Please report the issue to Admin before restarting."
-    );
-
-    error.status = 409;
-    error.code = "ASSESSMENT_TERMINATED";
-
-    throw error;
-  }
-
-  /*
-   * Admin approved the termination report.
-   *
-   * Do NOT modify the old Initial Quiz session.
-   * Do NOT modify the old Terminated Coding session.
-   *
-   * The old session remains as audit/history.
-   *
-   * Continue to the normal CREATE NEW ASSESSMENT flow below.
-   */
-}
      // ------------------------------------------------------------
     // CODING ASSESSMENT WAS TERMINATED
     // ------------------------------------------------------------
@@ -164,6 +125,7 @@ if (
        */
       approvedCodingRestart = true;
       existingSession = null;
+
     }
 
     // Only continue with the old coding session if it still exists.
@@ -199,15 +161,7 @@ if (
   // Prevent starting a brand-new assessment after full completion
   const profile = await repo.profiles.findByUserId(userId);
 
-if (
-  profile?.initial_assessment_completed === true &&
-  !approvedInitialRestart &&
-  !approvedCodingRestart
-) {
-  const error = new Error("Initial assessment already completed");
-  error.status = 409;
-  throw error;
-}
+
 
   if (!user.domain_role_id) {
     const allRoles = (await repo.domainRoles.list()) || [];
@@ -239,6 +193,41 @@ if (
   }
 
   const totalQuestions = requiredSkills.length * 10;
+
+  if (approvedCodingRestart) {
+  const restartTime = new Date();
+
+  const durationSeconds =
+    INITIAL_ASSESSMENT_DURATION_MINUTES * 60;
+
+ const restartQuizSession =
+  await repo.quizSessions.create({
+    user_id: userId,
+    domain_role_id: user.domain_role_id,
+    assessment_type: "INITIAL",
+    restart_stage: "INITIAL_CODING",
+    start_time: restartTime,
+    deadline_at: null,
+    remaining_seconds: durationSeconds,
+    paused_at: restartTime,
+    status: "Completed",
+    total_questions: totalQuestions,
+    questions_answered: totalQuestions,
+    current_skill_id: requiredSkills[0].skill_id,
+    current_question_id: null,
+  });
+
+   return {
+    resumed: false,
+    phase: "coding",
+    session_id: restartQuizSession.session_id,
+    coding_assessment: {
+      question_count:
+        codingAssessmentService.CODING_QUESTION_COUNT,
+      format: "Practical Coding",
+    },
+  };
+}
 
 
   // Terminal state - do not create new session
@@ -293,6 +282,16 @@ if (
       throw error;
     }
   }
+
+  if (
+  profile?.initial_assessment_completed === true &&
+  !approvedInitialRestart &&
+  !approvedCodingRestart
+) {
+  const error = new Error("Initial assessment already completed");
+  error.status = 409;
+  throw error;
+}
 
   /*
    * ============================================================
@@ -796,6 +795,8 @@ if (
 
       assessment_type: "INITIAL",
 
+      restart_stage: approvedInitialRestart ? "INITIAL_QUIZ" : null,
+
       start_time: startTime,
 
       deadline_at: null,
@@ -1027,6 +1028,58 @@ async function startFinalAssessment(userId) {
     error.status = 404;
     throw error;
   }
+
+
+// ------------------------------------------------------------
+// FINAL ASSESSMENT PREREQUISITES
+// ------------------------------------------------------------
+
+// 1. Check Initial Assessment completion
+const initialSession =
+  await repo.quizSessions.findLatestByUserAndAssessmentType(
+    userId,
+    "INITIAL"
+  );
+
+let codingSession = null;
+
+if (initialSession?.status === "Completed") {
+  codingSession = await repo.codingSessions.findBySessionAndUser(
+    initialSession.session_id,
+    userId
+  );
+}
+
+const initialAssessmentCompleted =
+  initialSession?.status === "Completed" &&
+  codingSession?.status === "Completed";
+
+// 2. Check course completion
+const enrollments = await repo.enrollments.listByUser(userId);
+
+const courseCompleted = (enrollments || []).some(
+  (enrollment) =>
+    Number(enrollment?.completion_percentage ?? 0) >= 100
+);
+
+// 3. Block Final Assessment if prerequisites are incomplete
+if (!initialAssessmentCompleted) {
+  const error = new Error(
+    "Complete the Initial Assessment before starting the Final Assessment."
+  );
+  error.status = 409;
+  error.code = "INITIAL_ASSESSMENT_INCOMPLETE";
+  throw error;
+}
+
+if (!courseCompleted) {
+  const error = new Error(
+    "Complete the required course before starting the Final Assessment."
+  );
+  error.status = 409;
+  error.code = "COURSE_INCOMPLETE";
+  throw error;
+}
 
   if (!user.domain_role_id) {
     const allRoles = (await repo.domainRoles.list()) || [];
@@ -3061,7 +3114,7 @@ async function submitFinalAssessmentAnswer(
 }
 
 async function getAssessmentOverview(userId) {
-  const [initialSession, finalSession, gapReport] = await Promise.all([
+  const [initialSession, finalSession, gapReport, user] = await Promise.all([
     repo.quizSessions.findLatestByUserAndAssessmentType(
       userId,
       "INITIAL"
@@ -3073,7 +3126,18 @@ async function getAssessmentOverview(userId) {
     ),
 
     repo.gapReports.findByUserId(userId),
+    repo.users.findById(userId),
+
   ]);
+
+  const enrollments = await repo.enrollments.listByUser(userId);
+
+  const courseCompleted = enrollments.some(
+  (enrollment) =>
+    Number(enrollment?.completion_percentage ?? 0) >= 100
+);
+
+
 
   //Get termination report
     const getTerminationEvent = async (sessionId) => {
@@ -3102,7 +3166,7 @@ async function getAssessmentOverview(userId) {
         "Assessment was terminated.",
       createdAt: event.created_at || null,
     };
-  }; 
+  };
 
   // ------------------------------------------------------------
   // CODING ASSESSMENT
@@ -3133,6 +3197,18 @@ if (initialSession?.status === "Completed") {
       ? await getTerminationEvent(finalSession.session_id)
       : null;
 
+  // ------------------------------------------------------------
+  // MINI PROJECT
+  // ------------------------------------------------------------
+  let miniProject = null;
+
+  if (user?.domain_role_id) {
+    miniProject = await repo.miniProjects.getCurrentForStudent(
+      userId,
+      user.domain_role_id
+    );
+  }
+
 
 const initialQuizCompleted = initialSession?.status === "Completed";
 const codingCompleted = codingSession?.status === "Completed";
@@ -3148,7 +3224,7 @@ if (initialQuizCompleted && codingCompleted) {
 }
 
 return {
-  
+
    initialAssessment: {
   status: initialAssessmentStatus,
 initialQuizStatus: initialSession?.status || "Not Started",
@@ -3162,12 +3238,20 @@ initialQuizStatus: initialSession?.status || "Not Started",
   termination: initialTerminationEvent,
 },
 
-    codingAssessment: {
+
+codingAssessment: {
   status: codingSession?.status || "Not Started",
   sessionId: codingSession?.session_id || null,
-  remainingSeconds:
-    Number(codingSession?.remaining_seconds || 0),
+  remainingSeconds: Number(codingSession?.remaining_seconds || 0),
+  questionsCompleted: Number(codingSession?.questions_completed || 0),
+  totalQuestions: codingAssessmentService.CODING_QUESTION_COUNT,
   termination: codingTerminationEvent,
+},
+
+
+
+courseCompletion: {
+  completed: courseCompleted,
 },
 
 
@@ -3180,9 +3264,9 @@ initialQuizStatus: initialSession?.status || "Not Started",
         termination: finalTerminationEvent,
       },
 
-      miniProject: {
-        status: "Not Available",
-      },
+  miniProject: {
+  status: miniProject ? "Available" : "Not Available",
+},
     },
   };
 }

@@ -8,12 +8,12 @@ const crypto = require("crypto");
 const CONTAINER_MAX_TIMEOUT = 30000;
 
 const DOCKER_IMAGES = {
-    python: process.env.CODING_DOCKER_PYTHON_IMAGE || "shivateja1234/edusaas-python:latest",
-    cpp: process.env.CODING_DOCKER_CPP_IMAGE || "shivateja1234/edusaas-cpp:latest",
-    c: process.env.CODING_DOCKER_C_IMAGE || "shivateja1234/edusaas-c:latest",
-    java: process.env.CODING_DOCKER_JAVA_IMAGE || "shivateja1234/edusaas-java:latest",
-    javascript: process.env.CODING_DOCKER_JAVASCRIPT_IMAGE || "shivateja1234/edusaas-javascript:latest"
-};
+    python: process.env.CODING_DOCKER_PYTHON_IMAGE || "shankar/edusaas-python:latest",
+    cpp: process.env.CODING_DOCKER_CPP_IMAGE || "shankar/edusaas-cpp:latest",
+    c: process.env.CODING_DOCKER_C_IMAGE || "shankar/edusaas-c:latest",
+    java: process.env.CODING_DOCKER_JAVA_IMAGE || "shankar/edusaas-java:latest",
+    javascript: process.env.CODING_DOCKER_JAVASCRIPT_IMAGE || "shankar/edusaas-javascript:latest"
+};;
 
 /**
  * Returns language configuration for container execution

@@ -1,5 +1,8 @@
 const express = require("express");
 const repo = require("../data");
+const {
+  getCareerJourneyEligibility,
+} = require("../services/careerJourneyService");
 
 const {
   authRequired,
@@ -18,20 +21,29 @@ const router = express.Router();
  *     responses:
  *       200: { description: Aggregated student dashboard data }
  */
+
 router.get(
   "/student",
   authRequired,
   permissionRequired("dashboards:student"),
   async (req, res, next) => {
     try {
-      return res.json(
-        await repo.studentDashboard(req.user.sub)
-      );
+      const userId = req.user.sub;
+
+      const dashboard = await repo.studentDashboard(userId);
+      const careerJourney =
+        await getCareerJourneyEligibility(userId);
+
+      return res.json({
+        ...dashboard,
+        careerJourney,
+      });
     } catch (err) {
       next(err);
     }
   }
 );
+
 
 /**
  * @openapi

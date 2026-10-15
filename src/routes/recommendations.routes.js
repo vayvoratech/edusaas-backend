@@ -24,7 +24,10 @@ router.get("/", authRequired, async (req, res, next) => {
     }
 
     const profile = await repo.profiles.findByUserId(req.user.sub);
-    const completedSession = await repo.quizSessions.findCompletedByUser(req.user.sub);
+    const completedSession = await repo.quizSessions.findCompletedByUser(
+  req.user.sub,
+  "INITIAL"
+);
     if (!profile?.initial_assessment_completed && !completedSession) {
       return res.json([]);
     }

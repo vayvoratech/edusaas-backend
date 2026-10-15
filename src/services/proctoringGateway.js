@@ -260,18 +260,28 @@ async function terminateAssessmentSession(sessionId, assessmentType = "QUIZ") {
   if (!sessionId) {
     return null;
   }
-  if (assessmentType === "CODING") {
-    try {
-      const updated = await repo.codingSessions.update(sessionId, {
-        status: "Terminated",
-      });
-      console.log(`[proctoring] Coding session ${sessionId} marked Terminated.`);
-      return updated;
-    } catch (err) {
-      console.error(`[proctoring] Failed to mark coding session ${sessionId} Terminated:`, err.message);
-      return null;
-    }
+ if (assessmentType === "CODING") {
+  try {
+    const updated = await repo.codingSessions.update(sessionId, {
+      status: "Terminated",
+      completed_at: new Date(),
+      deadline_at: null,
+      remaining_seconds: 0,
+    });
+
+    console.log(
+      `[proctoring] Coding session ${sessionId} marked Terminated and timer cleared.`
+    );
+
+    return updated;
+  } catch (err) {
+    console.error(
+      `[proctoring] Failed to mark coding session ${sessionId} Terminated:`,
+      err.message
+    );
+    return null;
   }
+}
   return terminateQuizSession(sessionId);
 }
 

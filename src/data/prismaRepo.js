@@ -2536,20 +2536,21 @@ const selectionRate =
     },
   }),
 
-  findCompletedByUser: async (user_id) =>
-    prisma.quizSession.findFirst({
-      where: {
-        user_id,
-        status: "Completed",
-      },
-      include: {
-        domainRole: true,
-      },
-      orderBy: {
-        start_time: "desc",
-      },
-    }),
-
+ findCompletedByUser: async (user_id, assessment_type) =>
+  prisma.quizSession.findFirst({
+    where: {
+      user_id,
+      assessment_type,
+      status: "Completed",
+      restart_stage: null,
+    },
+    include: {
+      domainRole: true,
+    },
+    orderBy: {
+      start_time: "desc",
+    },
+  }),
   findCompletedByUserAndAssessmentType: async ( user_id, assessment_type ) =>
     prisma.quizSession.findFirst({
       where: {
@@ -3555,6 +3556,13 @@ const selectionRate =
               select: {
                 id: true,
                 student_id: true,
+                  student: {
+           select: {
+             id: true,
+             name: true,
+             email: true,
+           },
+         },
                 attempt_number: true,
                 repository_url: true,
                 branch: true,
@@ -3672,85 +3680,195 @@ const selectionRate =
     },
 
     createSubmission: async ({
-      assignmentId,
-      studentId,
-      repositoryUrl,
-      branch,
-      commitSha,
-    }) => {
-      return prisma.miniProjectSubmission.create({
-        data: {
-          assignment_id: assignmentId,
-          student_id: studentId,
-          attempt_number: 1,
+  assignmentId,
+  studentId,
+  repositoryUrl,
+  branch,
+  commitSha,
+}) => {
+  const latestSubmission =
+    await prisma.miniProjectSubmission.findFirst({
+      where: {
+        assignment_id: assignmentId,
+        student_id: studentId,
+      },
+      orderBy: {
+        attempt_number: "desc",
+      },
+      select: {
+        attempt_number: true,
+      },
+    });
 
-          repository_url: repositoryUrl,
-          branch: branch,
-          commit_sha: commitSha,
+  const attemptNumber =
+    latestSubmission?.attempt_number
+      ? latestSubmission.attempt_number + 1
+      : 1;
 
-          status: "SUBMITTED",
-          submitted_at: new Date(),
+  return prisma.miniProjectSubmission.create({
+    data: {
+      assignment_id: assignmentId,
+      student_id: studentId,
+      attempt_number: attemptNumber,
 
-          analysis: {
-            create: {
-              status: "QUEUED",
-              static_analysis_status: "PENDING",
-              plagiarism_status: "PENDING",
-              ai_review_status: "NOT_REQUESTED",
-            },
-          },
+      repository_url: repositoryUrl,
+      branch: branch,
+      commit_sha: commitSha,
+
+      status: "SUBMITTED",
+      submitted_at: new Date(),
+
+      analysis: {
+        create: {
+          status: "QUEUED",
+          static_analysis_status: "PENDING",
+          plagiarism_status: "PENDING",
+          ai_review_status: "NOT_REQUESTED",
         },
-        include: {
-          analysis: true,
-        },
-      });
+      },
     },
-
-    findSubmissionByAssignmentAndStudent: async (
-      assignmentId,
-      studentId
-    ) => {
-      return safeQuery(
-        prisma.miniProjectSubmission.findUnique({
-          where: {
-            assignment_id_student_id: {
-              assignment_id: assignmentId,
-              student_id: studentId,
-            },
-          },
+    include: {
+      analysis: true,
+    },
+  });
+},
+   findSubmissionByAssignmentAndStudent: async (
+  assignmentId,
+  studentId
+) => {
+  return safeQuery(
+    prisma.miniProjectSubmission.findFirst({
+      where: {
+        assignment_id: assignmentId,
+        student_id: studentId,
+      },
+      orderBy: {
+        attempt_number: "desc",
+      },
+      select: {
+        id: true,
+        assignment_id: true,
+        student_id: true,
+        attempt_number: true,
+        repository_url: true,
+        branch: true,
+        commit_sha: true,
+        status: true,
+        submitted_at: true,
+        created_at: true,
+        updated_at: true,
+        analysis: {
           select: {
             id: true,
-            assignment_id: true,
-            student_id: true,
-            attempt_number: true,
-            repository_url: true,
-            branch: true,
-            commit_sha: true,
             status: true,
-            submitted_at: true,
+            static_analysis_status: true,
+            plagiarism_status: true,
+            ai_review_status: true,
+            readiness_score: true,
+            languages: true,
+            project_type: true,
+            started_at: true,
+            completed_at: true,
+            error_message: true,
             created_at: true,
             updated_at: true,
-            analysis: {
-              select: {
-                id: true,
-                status: true,
-                static_analysis_status: true,
-                plagiarism_status: true,
-                ai_review_status: true,
-                readiness_score: true,
-                languages: true,
-                project_type: true,
-                started_at: true,
-                completed_at: true,
-                error_message: true,
-                created_at: true,
-                updated_at: true,
-              },
-            },
           },
-        })
-      );
-    },
+        },
+      },
+    })
+  );
+},
+
+findSubmissionById: async (submissionId) => {
+  return safeQuery(
+    prisma.miniProjectSubmission.findUnique({
+      where: {
+        id: submissionId,
+      },
+      include: {
+        analysis: true,
+        student: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        assignment: {
+          select: {
+            id: true,
+            title: true,
+            educator_id: true,
+            domain_role_id: true,
+          },
+        },
+      },
+    })
+  );
+},
+
+
+approveSubmission: async (submissionId) => {
+  return safeQuery(
+    prisma.miniProjectSubmission.update({
+      where: {
+        id: submissionId,
+      },
+      data: {
+        status: "APPROVED",
+      },
+      include: {
+        analysis: true,
+        student: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        assignment: {
+          select: {
+            id: true,
+            title: true,
+            educator_id: true,
+            domain_role_id: true,
+          },
+        },
+      },
+    })
+  );
+},
+
+reassignSubmission: async (submissionId) => {
+  return safeQuery(
+    prisma.miniProjectSubmission.update({
+      where: {
+        id: submissionId,
+      },
+      data: {
+        status: "REASSIGNED",
+      },
+      include: {
+        analysis: true,
+        student: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        assignment: {
+          select: {
+            id: true,
+            title: true,
+            educator_id: true,
+            domain_role_id: true,
+          },
+        },
+      },
+    })
+  );
+},
 
     listStudentSubmissions: async (assignmentId, studentId) => {
       const submissions = await prisma.miniProjectSubmission.findMany({
@@ -3800,45 +3918,135 @@ const selectionRate =
     },
 
     listAssignmentsByEducator: async (educatorId) => {
-      return safeQuery(
-        prisma.miniProjectAssignment.findMany({
-          where: {
-            educator_id: educatorId,
+      //log for check the API response man..
+      console.log("EDUCATOR MINI PROJECT QUERY WITH STUDENT RELATION");
+ const assignments = await safeQuery(
+  prisma.miniProjectAssignment.findMany({
+    where: {
+      educator_id: educatorId,
+    },
+
+    orderBy: {
+      created_at: "desc",
+    },
+
+    include: {
+      domainRole: true,
+
+      submissions: {
+        select: {
+          id: true,
+          student_id: true,
+
+          student: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
           },
-          orderBy: {
-            created_at: "desc",
-          },
-          include: {
-            domainRole: true,
-            submissions: {
-              select: {
-                id: true,
-                student_id: true,
-                attempt_number: true,
-                repository_url: true,
-                branch: true,
-                commit_sha: true,
-                status: true,
-                submitted_at: true,
-                analysis: {
-                  select: {
-                    id: true,
-                    status: true,
-                    static_analysis_status: true,
-                    plagiarism_status: true,
-                    ai_review_status: true,
-                    readiness_score: true,
+
+          attempt_number: true,
+          repository_url: true,
+          branch: true,
+          commit_sha: true,
+          status: true,
+          submitted_at: true,
+
+          analysis: {
+            select: {
+              id: true,
+              status: true,
+              static_analysis_status: true,
+              plagiarism_status: true,
+              ai_review_status: true,
+              readiness_score: true,
+
+              plagiarism_check: {
+                select: {
+                  id: true,
+                  status: true,
+                  highest_similarity: true,
+                  comparison_count: true,
+
+                  matches: {
+                    select: {
+                      id: true,
+                      matched_submission_id: true,
+                      similarity: true,
+                      risk_level: true,
+                      matched_files: true,
+                    },
+
+                    orderBy: {
+                      similarity: "desc",
+                    },
                   },
                 },
               },
-              orderBy: {
-                submitted_at: "desc",
-              },
             },
           },
-        })
-      );
+        },
+
+        orderBy: {
+          submitted_at: "desc",
+        },
+      },
     },
+  })
+);
+
+return assignments.map((assignment) => {
+  const submissions = assignment.submissions || [];
+
+  const enrichedSubmissions = submissions.map((submission) => {
+    const plagiarismCheck = submission.analysis?.plagiarism_check;
+
+    if (!plagiarismCheck) {
+      return submission;
+    }
+
+    const enrichedMatches = (plagiarismCheck.matches || []).map(
+      (match) => {
+        const matchedSubmission = submissions.find(
+          (candidate) =>
+            candidate.id === match.matched_submission_id
+        );
+
+        return {
+          ...match,
+
+          matched_student: matchedSubmission?.student
+            ? {
+                id: matchedSubmission.student.id,
+                name: matchedSubmission.student.name,
+                email: matchedSubmission.student.email,
+              }
+            : null,
+        };
+      }
+    );
+
+    return {
+      ...submission,
+
+      analysis: {
+        ...submission.analysis,
+
+        plagiarism_check: {
+          ...plagiarismCheck,
+          matches: enrichedMatches,
+        },
+      },
+    };
+  });
+
+  return {
+    ...assignment,
+    submissions: enrichedSubmissions,
+  };
+});
+  },
 
     getAnalysisBySubmissionId: async (submissionId) => {
       return safeQuery(
@@ -3920,6 +4128,30 @@ const selectionRate =
         })
       );
     },
+
+
+    retryAnalysis: async (analysisId) => {
+  return safeQuery(
+    prisma.miniProjectAnalysis.update({
+      where: {
+        id: analysisId,
+      },
+      data: {
+        status: "QUEUED",
+        static_analysis_status: "PENDING",
+        plagiarism_status: "PENDING",
+        ai_review_status: "NOT_REQUESTED",
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        readiness_score: null,
+        languages: null,
+        project_type: null,
+      },
+    })
+  );
+},
+
 
     saveStaticAnalysisFindings: async (analysisId, findings = []) => {
       return safeQuery(
@@ -5174,6 +5406,7 @@ return {
       user,
       initialAssessment,
       gapReport,
+      codingSessions,
       enrollments,
       tasks,
       achievements,
@@ -5206,9 +5439,10 @@ return {
 
     prisma.quizSession.findFirst({
     where: {
-      user_id,
-          status: "Completed",
-        },
+    user_id,
+    assessment_type: "INITIAL",
+    status: "Completed",
+  },
         orderBy: {
             end_time: "desc",
           },
@@ -5230,6 +5464,23 @@ return {
         user_id,
       },
     }),
+prisma.user_coding_sessions.findMany({
+  where: { user_id },
+  orderBy: {
+    started_at: "desc",
+  },
+  select: {
+    status: true,
+    questions_completed: true,
+    completed_at: true,
+    quiz_sessions: {
+      select: {
+        assessment_type: true,
+      },
+    },
+  },
+}),
+
 
       prisma.enrollment.findMany({
         where: { user_id },
@@ -5411,7 +5662,22 @@ return {
       const totalWeeks = Math.max(4, elapsedWeeks);
 
       // Readiness Score
-      const readinessScore = gapReport?.readiness_score?? 0;
+const completedCodingAssessment = codingSessions.some(
+  (session) =>
+    session.quiz_sessions?.assessment_type === "INITIAL" &&
+    session.status === "Completed" &&
+    Number(session.questions_completed) === 3 &&
+    session.completed_at != null
+);
+
+const assessmentCompleted =
+  Boolean(initialAssessment) && completedCodingAssessment;
+
+// Only show the initial readiness score when both stages are complete.
+const readinessScore = assessmentCompleted
+  ? (gapReport?.initial_readiness_score ?? null)
+  : null;
+
 
       const learningAnalytics = [];
 
@@ -5505,7 +5771,7 @@ return {
     studentName: user?.name,
     domainRoleId: user?.domain_role_id,
     domainRole: user?.domainRole?.domain_name || null,
-    assessmentCompleted: !!user?.profile?.initial_assessment_completed,
+    assessmentCompleted,
     learningProgressPercentage,
     completedLessons,
     totalLessons,
