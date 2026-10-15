@@ -1,6 +1,7 @@
 const { aimlServiceUrl, aimlTimeoutMs } = require("../config/env");
 const crypto = require("crypto");
 
+const DEFAULT_AIML_TIMEOUT_MS = 45000;
 /**
  * Converts a string ID (like a Clerk user_2Q...) into a stable positive Integer
  */
@@ -41,7 +42,8 @@ async function callAIML(
   customTimeoutMs = null
 ) {
   const controller = new AbortController();
-  const timeoutDuration = customTimeoutMs || aimlTimeoutMs || 45000;
+  const timeoutDuration =
+  customTimeoutMs || aimlTimeoutMs || DEFAULT_AIML_TIMEOUT_MS;
 
   // Prevent a slow/unavailable AIML service from blocking
   // the main application request indefinitely.
@@ -91,7 +93,7 @@ async function callAIML(
   } catch (error) {
     if (error.name === "AbortError") {
       console.error(
-        `[AIML Client Timeout] ${endpoint}: AI service did not respond within ${timeoutDuration}ms`
+        `[AIML Client Timeout] ${endpoint}: AI service did not respond within ${timeoutDuration / 1000} seconds`
       );
     } else {
       console.error(

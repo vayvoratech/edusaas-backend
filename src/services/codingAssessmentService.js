@@ -126,6 +126,30 @@ async function startAssessment({ userId, sessionId }) {
       throw error;
     }
 
+
+  // Do not change a terminated session to Timed Out.
+  if (codingSession.status === "Terminated") {
+    const error = new Error(
+      "Coding assessment has been terminated. Please report the issue to Admin before restarting."
+    );
+
+    error.status = 409;
+    error.code = "ASSESSMENT_TERMINATED";
+    throw error;
+  }
+
+  // A timed-out session cannot be restarted using the same session.
+  if (codingSession.status === "Timed Out") {
+    const error = new Error(
+      "Coding assessment time has expired."
+    );
+
+    error.status = 409;
+    error.code = "ASSESSMENT_TIMED_OUT";
+    throw error;
+  }
+
+
     // -------------------------------------------------------
     // PAUSED sessions have no active deadline (deadline_at is
     // cleared on pause) — the persisted remaining_seconds is
@@ -674,7 +698,7 @@ async function runStudentCode({
   // ---------------------------------------------------------
   // 9. Run code against sample test cases
   // ---------------------------------------------------------
-  
+
   const executions = await runCodeBatch(
       canonicalLanguage,
       code,
@@ -712,7 +736,7 @@ async function runStudentCode({
           executionTime: execution?.executionTime || 0,
       };
 });
- 
+
 
   // ---------------------------------------------------------
   // 10. Return execution result
@@ -1086,7 +1110,7 @@ async function submitCode({
       },
       comparison_submissions: comparison_submissions
     });
-    
+
     const matches = (plagiarismResp && (plagiarismResp.matches || plagiarismResp.data?.matches)) || [];
     const comparisonCount = (plagiarismResp && (plagiarismResp.comparison_count ?? plagiarismResp.data?.comparison_count)) || 0;
 
@@ -1218,6 +1242,240 @@ async function submitCode({
   };
 }
 
+
+async function getInitialAssessmentRestartContext(userId, currentSessionId) {
+  const reports = await repo.assessmentReports.findByStudent(userId);
+
+  const approvedRestart = (reports || []).find(
+    (report) =>
+      report.status === "Approved" &&
+      ["INITIAL_QUIZ", "INITIAL_CODING"].includes(
+        report.assessment_stage
+      ) &&
+      Number(report.quiz_session_id) !== Number(currentSessionId)
+  );
+
+  return {
+    restartedStage: approvedRestart?.assessment_stage ?? null,
+    previousSessionId: approvedRestart?.quiz_session_id ?? null,
+  };
+}
+
+async function getPreviousValidCodingScore(userId, excludeSessionId) {
+  const sessions = await repo.codingSessions.findByUserId(userId);
+
+  const previousSession = (sessions || []).find(
+    (session) =>
+      Number(session.session_id) !== Number(excludeSessionId) &&
+      session.status === "Completed" &&
+      Number(session.max_score) > 0
+  );
+
+  if (!previousSession) return null;
+
+  return (
+    (Number(previousSession.total_score || 0) /
+      Number(previousSession.max_score)) *
+    100
+  );
+}
+
+
+// ---------------------------------------------------------
+// Get the latest valid completed Initial Quiz score
+// ---------------------------------------------------------
+
+async function getLatestValidInitialQuizScore(userId) {
+  const sessions =
+    await repo.quizSessions.findByUserId(userId);
+
+  const completedSessions = sessions
+    .filter(
+      (session) =>
+        session.assessment_type === "INITIAL" &&
+        session.status === "Completed"
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.start_time).getTime() -
+        new Date(a.start_time).getTime()
+    );
+
+  for (const session of completedSessions) {
+    const score =
+      await repo.studentSkillResults.getQuizScoreBySessionId(
+        session.session_id
+      );
+
+    if (score !== null && score !== undefined) {
+      return {
+        sessionId: session.session_id,
+        score,
+      };
+    }
+  }
+
+  return null;
+}
+
+
+async function getPreviousValidInitialQuizScoreBeforeRestart(
+  userId,
+  currentSessionId
+) {
+  const reports = await repo.assessmentReports.findByStudent(userId);
+
+  // Find the approved coding-restart report associated with the
+  // terminated coding session that led to this restart.
+  const approvedReport = (reports || []).find(
+    (report) =>
+      report.status === "Approved" &&
+      report.assessment_stage === "INITIAL_CODING" &&
+      Number(report.quiz_session_id) !== Number(currentSessionId)
+  );
+
+  if (!approvedReport) {
+    return null;
+  }
+
+  const previousQuizSession = await repo.quizSessions.findById(
+    approvedReport.quiz_session_id
+  );
+
+  if (
+    !previousQuizSession ||
+    String(previousQuizSession.user_id) !== String(userId) ||
+    previousQuizSession.assessment_type !== "INITIAL" ||
+    previousQuizSession.status !== "Completed"
+  ) {
+    return null;
+  }
+
+  const score =
+    await repo.studentSkillResults.getQuizScoreBySessionId(
+      previousQuizSession.session_id
+    );
+
+  if (score === null || score === undefined) {
+    return null;
+  }
+
+  return {
+    sessionId: previousQuizSession.session_id,
+    score,
+  };
+}
+
+
+async function getInitialReadinessScores(userId, codingSession) {
+  const linkedQuizSession = await repo.quizSessions.findById(
+    codingSession.session_id
+  );
+
+  const restartStage = linkedQuizSession?.restart_stage ?? null;
+
+  let quizResult;
+  let codingScore;
+
+  // Quiz score: use the latest valid completed quiz score.
+  quizResult = await getLatestValidInitialQuizScore(userId);
+
+  if (!quizResult) {
+    const error = new Error(
+      "Completed Initial Quiz results not found"
+    );
+    error.status = 409;
+    throw error;
+  }
+
+  // Coding score from the current completed coding session.
+  const totalScore = Number(codingSession.total_score || 0);
+  const maxScore = Number(codingSession.max_score || 300);
+
+  codingScore = maxScore > 0 ? (totalScore / maxScore) * 100 : 0;
+
+  // If only the quiz was restarted, preserve the previous valid coding score.
+  if (restartStage === "INITIAL_QUIZ") {
+    const previousCodingScore = await getPreviousValidCodingScore(
+      userId,
+      codingSession.session_id
+    );
+
+    if (previousCodingScore === null) {
+      const error = new Error(
+        "Previous valid coding score not found for quiz restart"
+      );
+      error.status = 409;
+      throw error;
+    }
+
+    codingScore = previousCodingScore;
+  }
+
+  // If only coding was restarted, preserve the quiz score from before
+  // that coding restart, rather than accidentally selecting a newer attempt.
+  if (restartStage === "INITIAL_CODING") {
+    const previousQuizResult = await getPreviousValidInitialQuizScoreBeforeRestart(
+      userId,
+      codingSession.session_id
+    );
+
+    if (!previousQuizResult) {
+      const error = new Error(
+        "Previous valid quiz score not found for coding restart"
+      );
+      error.status = 409;
+      throw error;
+    }
+
+    quizResult = previousQuizResult;
+  }
+
+  return {
+    quizScore: quizResult.score,
+    codingScore,
+    restartStage,
+  };
+}
+
+
+
+async function getLatestValidCodingScore(userId) {
+  const sessions = await repo.codingSessions.findByUserId(userId);
+
+  const completedSessions = (sessions || [])
+    .filter(
+      (session) =>
+        session.status === "Completed" &&
+        Number(session.max_score) > 0
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.started_at).getTime() -
+        new Date(a.started_at).getTime()
+    );
+
+  if (completedSessions.length === 0) {
+    return null;
+  }
+
+  const session = completedSessions[0];
+
+  return {
+    sessionId: session.session_id,
+    score:
+      (Number(session.total_score || 0) /
+        Number(session.max_score)) *
+      100,
+  };
+}
+
+
+
+// ---------------------------------------------------------
+// Complete coding assessment
+// ---------------------------------------------------------
+
 async function completeAssessment({ userId, sessionId }) {
   if (!userId || !sessionId) {
     const error = new Error("userId and sessionId are required");
@@ -1254,37 +1512,22 @@ async function completeAssessment({ userId, sessionId }) {
   // ---------------------------------------------------------
 
   if (codingSession.status === "Completed") {
-    const completedQuizSession =
-      await repo.quizSessions.findCompletedByUserAndAssessmentType(
-        userId,
-        "INITIAL"
-      );
 
-    if (!completedQuizSession) {
-      const error = new Error(
-        "Completed Initial Quiz session not found"
-      );
-      error.status = 409;
-      throw error;
-    }
 
-    const quizScore =
-      await repo.studentSkillResults.getQuizScoreBySessionId(
-        completedQuizSession.session_id
-      );
+const { quizScore, codingScore } =
+  await getInitialReadinessScores(
+    userId,
+    codingSession
+  );
 
-    const totalScore = Number(
-      codingSession.total_score || 0
-    );
+const totalScore = Number(
+  codingSession.total_score || 0
+);
 
-    const maxScore = Number(
-      codingSession.max_score || 300
-    );
+const maxScore = Number(
+  codingSession.max_score || 300
+);
 
-    const codingScore =
-      maxScore > 0
-        ? (totalScore / maxScore) * 100
-        : 0;
 
     const readinessScore =
       calculateInitialReadiness(
@@ -1313,7 +1556,7 @@ async function completeAssessment({ userId, sessionId }) {
           codingSession.remaining_seconds || 0,
       },
       readiness: {
-        quizScore: Number(quizScore.toFixed(2)),
+        quizScore: Number((quizScore ?? 0).toFixed(2)),
         codingScore: Number(codingScore.toFixed(2)),
         readinessScore,
       },
@@ -1505,15 +1748,24 @@ async function completeAssessment({ userId, sessionId }) {
     throw error;
   }
 
-  const quizScore =
-    await repo.studentSkillResults.getQuizScoreBySessionId(
-      completedQuizSession.session_id
-    );
 
-  const codingScore =
-    maxScore > 0
-      ? (totalScore / maxScore) * 100
-      : 0;
+const { quizScore, codingScore } =
+  await getInitialReadinessScores(
+    userId,
+    updatedSession
+  );
+
+console.log("[READINESS DEBUG]", {
+  userId,
+  codingSessionId: codingSession.session_id,
+  codingSessionStatus: codingSession.status,
+  quizScore,
+  codingScore,
+  calculatedReadiness: calculateInitialReadiness(
+    quizScore ?? 0,
+    codingScore
+  ),
+});
 
   let readinessScore = null;
 
@@ -1580,7 +1832,7 @@ async function completeAssessment({ userId, sessionId }) {
     },
 
     readiness: {
-      quizScore: Number(quizScore.toFixed(2)),
+      quizScore: Number((quizScore ?? 0).toFixed(2)),
       codingScore: Number(codingScore.toFixed(2)),
       readinessScore,
     },
@@ -1601,13 +1853,14 @@ async function activateAssessment({ userId, sessionId }) {
   }
 
   if (codingSession.status === "Completed") {
+
     const error = new Error(
       "Coding assessment has already been completed"
     );
     error.status = 409;
     throw error;
   }
-  
+
 
   if (codingSession.status === "Timed Out") {
     const error = new Error(

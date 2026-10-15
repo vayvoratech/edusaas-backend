@@ -85,7 +85,7 @@ router.post( "/", authRequired, permissionRequired("mini-projects:create"), asyn
         }
       }
 
-     
+
 
       const domainRole = await repo.domainRoles.findById(domain_role_id);
 
@@ -206,7 +206,7 @@ router.post("/:id/publish", authRequired, permissionRequired("mini-projects:publ
   }
 );
 
-router.get( "/", authRequired, roleRequired("educator"), 
+router.get( "/", authRequired, roleRequired("educator"),
   permissionRequired("mini-projects:view"), async (req, res, next) => {
     try {
       const assignments =
@@ -289,6 +289,9 @@ router.get( "/current", authRequired, roleRequired("student"), permissionRequire
  *         description: Student submissions
  */
 router.get( "/:id/submissions", authRequired, roleRequired("student"), permissionRequired("mini-projects:view"), async (req, res, next) => {
+
+
+
     try {
       const assignment = await repo.miniProjects.findAssignmentById(
         req.params.id
@@ -332,12 +335,57 @@ router.get( "/:id/submissions", authRequired, roleRequired("student"), permissio
       );
 
       return res.json(submissionsWithAnalysis);
-      
+
     } catch (err) {
       next(err);
     }
   }
 );
+
+/**
+ * @openapi
+ * /api/mini-projects/{id}/submissions:
+ *   post:
+ *     tags: [Mini Projects]
+ *     summary: Submit a mini project
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - repository_url
+ *             properties:
+ *               repository_url:
+ *                 type: string
+ *                 format: uri
+ *                 example: https://github.com/rmgonella/react-node-ecommerce
+ *               branch:
+ *                 type: string
+ *                 example: main
+ *     responses:
+ *       201:
+ *         description: Mini project submitted successfully
+ *       400:
+ *         description: Invalid submission data
+ *       403:
+ *         description: Student is not authorized for this mini project
+ *       404:
+ *         description: Mini project assignment or student not found
+ *       409:
+ *         description: Submission is not allowed
+ */
+
 
 router.post( "/:id/submissions", authRequired, roleRequired("student"),
   permissionRequired("mini-projects:submit"),
@@ -423,18 +471,21 @@ router.post( "/:id/submissions", authRequired, roleRequired("student"),
       // Enforce one submission per student
       // ---------------------------------------------------------
 
-      const existingSubmission =
-        await repo.miniProjects.findSubmissionByAssignmentAndStudent(
+     const existingSubmission =
+       await repo.miniProjects.findSubmissionByAssignmentAndStudent(
           assignmentId,
           studentId
-        );
+         );
 
-      if (existingSubmission) {
-        return res.status(409).json({
-          error:
-            "You have already submitted this mini project. Further submissions are not allowed.",
-        });
-      }
+        if (
+          existingSubmission &&
+          existingSubmission.status !== "REASSIGNED"
+     ) {
+       return res.status(409).json({
+       error:
+       "You cannot submit another attempt until the educator reassigns the mini project again ",
+    });
+  }
 
       // ---------------------------------------------------------
       // Validate GitHub repository + resolve commit
@@ -470,11 +521,123 @@ router.post( "/:id/submissions", authRequired, roleRequired("student"),
         err.meta.target.includes("student_id")
       ) {
         return res.status(409).json({
-          error:
-            "You have already submitted this mini project. Further submissions are not allowed.",
+         error:
+         "You cannot submit another attempt until the educator reassigns the mini project.",
+         });
+      }
+
+      next(err);
+    }
+  }
+);
+
+
+/**
+ * @openapi
+ * /api/mini-projects/submissions/{submissionId}/approve:
+ *   post:
+ *     tags: [Mini Projects]
+ *     summary: Approve a mini project submission
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  "/submissions/:submissionId/approve",
+  authRequired,
+  roleRequired("educator"),
+  permissionRequired("mini-projects:view"),
+  async (req, res, next) => {
+    try {
+      const submissionId = req.params.submissionId;
+      const educatorId = req.user.sub;
+
+      const submission =
+        await repo.miniProjects.findSubmissionById(submissionId);
+
+      if (!submission) {
+        return res.status(404).json({
+          error: "Mini project submission not found.",
         });
       }
 
+      if (submission.assignment?.educator_id !== educatorId) {
+        return res.status(403).json({
+          error: "You are not authorized to approve this submission.",
+        });
+      }
+
+      if (submission.status !== "SUBMITTED") {
+        return res.status(409).json({
+          error:
+            "Only submitted mini project submissions can be approved.",
+        });
+      }
+
+      const updatedSubmission =
+        await repo.miniProjects.approveSubmission(submissionId);
+
+      return res.json({
+        success: true,
+        message: "Mini project submission approved successfully.",
+        data: updatedSubmission,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * @openapi
+ * /api/mini-projects/submissions/{submissionId}/reassign:
+ *   post:
+ *     tags: [Mini Projects]
+ *     summary: Reassign a mini project submission
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  "/submissions/:submissionId/reassign",
+  authRequired,
+  roleRequired("educator"),
+  permissionRequired("mini-projects:view"),
+  async (req, res, next) => {
+    try {
+      const submissionId = req.params.submissionId;
+      const educatorId = req.user.sub;
+
+      const submission =
+        await repo.miniProjects.findSubmissionById(submissionId);
+
+      if (!submission) {
+        return res.status(404).json({
+          error: "Mini project submission not found.",
+        });
+      }
+
+      if (submission.assignment?.educator_id !== educatorId) {
+        return res.status(403).json({
+          error: "You are not authorized to reassign this submission.",
+        });
+      }
+
+      if (submission.status !== "SUBMITTED") {
+        return res.status(409).json({
+          error:
+            "Only submitted mini project submissions can be reassigned.",
+        });
+      }
+
+      const updatedSubmission =
+        await repo.miniProjects.reassignSubmission(submissionId);
+
+      return res.json({
+        success: true,
+        message:
+          "Mini project submission reassigned successfully. Student can submit another attempt.",
+        data: updatedSubmission,
+      });
+    } catch (err) {
       next(err);
     }
   }

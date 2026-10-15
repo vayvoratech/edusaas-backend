@@ -155,14 +155,65 @@ async function processAnalysis(analysis) {
      * Even when comparisonPayloads is empty, we still call
      * AIML. The AIML service supports comparison_count = 0.
      */
-    const plagiarismResult =
-      await checkMiniProjectPlagiarism({
-        submission: {
-          submission_id: analysis.submission.id,
-          files: submissionFiles,
-        },
-        comparisonSubmissions: comparisonPayloads,
-      });
+console.log(
+  "[Plagiarism] Target files:",
+  submissionFiles.length
+);
+
+console.log(
+  "[Plagiarism] Comparison submissions:",
+  comparisonPayloads.length
+);
+
+console.log(
+  "[Plagiarism] Comparison files:",
+  comparisonPayloads.map((x) => ({
+    submission_id: x.submission_id,
+    files: x.files.length,
+  }))
+);
+
+const totalTargetChars = submissionFiles.reduce(
+  (sum, file) => sum + (file.code?.length || 0),
+  0
+);
+
+const totalComparisonChars = comparisonPayloads.reduce(
+  (sum, submission) =>
+    sum +
+    submission.files.reduce(
+      (fileSum, file) => fileSum + (file.code?.length || 0),
+      0
+    ),
+  0
+);
+
+console.log(
+  "[Plagiarism] Target code characters:",
+  totalTargetChars
+);
+
+console.log(
+  "[Plagiarism] Comparison code characters:",
+  totalComparisonChars
+);
+
+
+    console.log("[Plagiarism] Calling AIML service...");
+
+const plagiarismResult =
+  await checkMiniProjectPlagiarism({
+    submission: {
+      submission_id: analysis.submission.id,
+      files: submissionFiles,
+    },
+    comparisonSubmissions: comparisonPayloads,
+  });
+
+console.log(
+  "[Plagiarism] AIML response:",
+  JSON.stringify(plagiarismResult)
+);
 
       const miniProjectScore = calculateMiniProjectScore(
         staticScore,
@@ -190,9 +241,6 @@ async function processAnalysis(analysis) {
     );
 
     
-
-    
-
     /*
      * 12. Plagiarism is the final analysis stage for now.
      *     Mark both plagiarism and overall analysis completed.

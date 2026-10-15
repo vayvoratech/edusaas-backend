@@ -7,6 +7,9 @@ const repo = require("../data");
 const { sendEmail } = require("../config/mail");
 const { authRequired, permissionRequired } = require("../middleware/auth");
 const aimlClient = require("../services/aimlClient");
+const {
+  getCareerJourneyEligibility,
+} = require("../services/careerJourneyService");
 
 
 
@@ -188,6 +191,9 @@ router.get("/", async (req, res, next) => {
         });
       }
 
+      // 2. Student must complete the required career journey
+const journey = await getCareerJourneyEligibility(req.user.sub);
+
       // 2. Student must have selected a domain
       if (!student.domain_role_id) {
         return res.json({
@@ -238,12 +244,12 @@ router.get("/", async (req, res, next) => {
           continue;
         }
 
-        recommendedJobs.push({
-          ...job,
-          eligible: true,
-          match_reason:
-            "This job matches your selected career domain.",
-        });
+      recommendedJobs.push({
+  ...job,
+  eligible: journey.eligibleForJobs,
+  match_reason:
+    "This job matches your selected career domain.",
+});
       }
 
       // Newest jobs first
@@ -253,10 +259,15 @@ router.get("/", async (req, res, next) => {
           new Date(a.created_at)
       );
 
-      return res.json({
-        jobs: recommendedJobs,
-        count: recommendedJobs.length,
-      });
+     return res.json({
+  jobs: recommendedJobs,
+  count: recommendedJobs.length,
+  eligible: journey.eligibleForJobs,
+  journey,
+  message: journey.eligibleForJobs
+    ? undefined
+    : "Complete your learning journey and obtain your certificate before applying for jobs.",
+});
 
     } catch (err) {
       next(err);
@@ -696,7 +707,7 @@ const processStudent = async (student) => {
   // so run them together.
   const [completedSession, applicationData] =
     await Promise.all([
-      repo.quizSessions.findCompletedByUser(student.id),
+     repo.quizSessions.findCompletedByUser(student.id, "INITIAL"),
       getApplicationData(student.id),
     ]);
 
@@ -887,7 +898,7 @@ const skillsInsightsMap = new Map();
 
 for (const student of domainStudents) {
   const completedSession =
-    await repo.quizSessions.findCompletedByUser(student.id);
+    await repo.quizSessions.findCompletedByUser(student.id, "INITIAL");
 
   if (!completedSession) continue;
 
@@ -1315,6 +1326,17 @@ router.post(
           error: "Only students can apply for jobs.",
         });
       }
+
+      const journey = await getCareerJourneyEligibility(req.user.sub);
+
+if (!journey.eligibleForJobs) {
+  return res.status(403).json({
+    error: "JOB_ELIGIBILITY_INCOMPLETE",
+    message:
+      "You must complete your learning journey and obtain your certificate before applying for jobs.",
+    journey,
+  });
+}
 
       const job = await repo.jobs.findById(req.params.id);
 

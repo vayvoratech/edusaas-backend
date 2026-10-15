@@ -729,6 +729,7 @@ model QuizSession {
   user_id              String                @db.Uuid
   domain_role_id       String                @db.Uuid
   assessment_type      assessment_type       @default(INITIAL)
+  restart_stage String? @db.VarChar(30)
   start_time           DateTime              @default(now()) @db.Timestamp(6)
   end_time             DateTime?             @db.Timestamp(6)
   status               String                @default("In Progress") @db.VarChar(20)
@@ -1130,7 +1131,7 @@ model MiniProjectSubmission {
   student    User                  @relation("StudentMiniProjectSubmissions", fields: [student_id], references: [id], onDelete: Cascade)
   analysis   MiniProjectAnalysis?
 
-  @@unique([assignment_id, student_id], map: "uq_mini_project_submission_student_assignment")
+  @@unique([assignment_id, student_id, attempt_number], map: "uq_mini_project_submission_student_assignment")
   @@index([assignment_id], map: "idx_mini_project_submissions_assignment")
   @@index([student_id], map: "idx_mini_project_submissions_student")
   @@index([status], map: "idx_mini_project_submissions_status")
