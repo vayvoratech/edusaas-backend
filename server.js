@@ -5,7 +5,7 @@ const path = require("path");
 const swaggerUi = require("swagger-ui-express");
 
 // Import environment variables and Swagger configuration
-const { port, appEnv } = require("./src/config/env");
+const { port, appEnv, proctorApiUrl, proctorApiKey } = require("./src/config/env");
 const swaggerSpec = require("./src/config/swagger");
 
 // Import route handlers
@@ -45,14 +45,23 @@ const { attachProctoringGateway } = require("./src/services/proctoringGateway");
 const app = express();
 
 // Enable Cross-Origin Resource Sharing (CORS)
-const corsOrigins = (process.env.CORS_ORIGINS || "")
+const corsOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
+const allowsAnyOrigin = corsOrigins.includes("*");
 
 app.use(
   cors({
-    origin: corsOrigins,
+    origin: (origin, callback) => {
+      if (!origin || allowsAnyOrigin || corsOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
   })
 );
 // Mount webhooks route BEFORE express.json() so it can use express.raw()
@@ -158,6 +167,7 @@ app.use("/api/rbac", rbacRoutes);
 app.use("/api/community", communityRoutes);
 app.use("/api/aiml", require("./src/routes/aiml.routes"));
 app.use("/api/mini-projects", miniProjectRoutes);
+app.use("/api/proctor", require("./src/routes/proctor.routes"));
 
 const repo = require("./src/data");
 const { authRequired } = require("./src/middleware/auth");
@@ -179,6 +189,10 @@ app.use(errorHandler);
 // Start the server and listen on the configured port
 const server = app.listen(port, () => {
   console.log(`[env] APP_ENV=${appEnv}`);
+  console.log("[proctoring] Configuration:", {
+    PROCTOR_API_URL: Boolean(proctorApiUrl),
+    PROCTOR_API_KEY: Boolean(proctorApiKey),
+  });
   console.log(`EDU-SAAS backend running at http://localhost:${port}`);
   console.log(`Swagger docs:           http://localhost:${port}/api-docs`);
 });

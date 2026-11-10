@@ -23,13 +23,13 @@ const rawAimlUrl = (
   "https://edusaas-aiml-parb.onrender.com"
 ).trim().replace(/\/+$/, "");
 
-const rawFraudWs = (
+const fraudAiWsUrl = (
   process.env.FRAUD_AI_WS_URL ||
   (rawAimlUrl.startsWith("https://")
-    ? rawAimlUrl.replace("https://", "wss://") + "/ws/proctor"
+    ? rawAimlUrl.replace(/^https:/, "wss:") + "/ws/proctor"
     : rawAimlUrl.startsWith("http://")
-    ? rawAimlUrl.replace("http://", "ws://") + "/ws/proctor"
-    : "ws://127.0.0.1:10000/ws/proctor")
+    ? rawAimlUrl.replace(/^http:/, "ws:") + "/ws/proctor"
+    : "wss://edusaas-aiml-parb.onrender.com/ws/proctor")
 ).trim();
 
 module.exports = {
@@ -51,7 +51,9 @@ module.exports = {
   smtpFrom: process.env.SMTP_FROM || "",
 
   aimlServiceUrl: rawAimlUrl,
-  fraudAiWsUrl: rawFraudWs,
+  proctorApiUrl: (process.env.PROCTOR_API_URL || "").trim(),
+  proctorApiKey: (process.env.PROCTOR_API_KEY || "").trim(),
+  fraudAiWsUrl,
   plagiarismBaseUrl: rawAimlUrl,
   flaskQuizUrl: rawAimlUrl,
 };

@@ -2,11 +2,13 @@ const WebSocket = require("ws");
 const { verifyAccessToken } = require("../config/jwt");
 const repo = require("../data");
 
-const { fraudAiWsUrl } = require("../config/env");
-
-const FRAUD_AI_WS_URL =
-  fraudAiWsUrl ||
-  "wss://edusaas-aiml-parb.onrender.com/ws/proctor";
+const {
+  proctorApiUrl,
+  proctorApiKey,
+  fraudAiWsUrl,
+} = require("../config/env");
+const PROCTOR_TIMEOUT_MS = 30000;
+const PROCTORING_UNAVAILABLE_MESSAGE = "Proctoring unavailable, try again";
 
 const activeSessions = new Map();
 
@@ -143,34 +145,183 @@ async function validateProctoringStart(message) {
   };
 }
 
-function connectToFraudAI() {
-  return new Promise((resolve, reject) => {
-    const aiSocket = new WebSocket(
-      FRAUD_AI_WS_URL
-    );
+function getProctorConfig() {
+  if (!proctorApiUrl) {
+    let websocketUrl;
+    try {
+      const wsUrl = new URL(fraudAiWsUrl);
+      if (wsUrl.protocol !== "ws:" && wsUrl.protocol !== "wss:") {
+        throw new Error("FRAUD_AI_WS_URL must use ws:// or wss://.");
+      }
 
-    const timeout = setTimeout(() => {
+      wsUrl.pathname = wsUrl.pathname.replace(/\/+$/, "");
+      if (!/\/ws\/proctor$/i.test(wsUrl.pathname)) {
+        wsUrl.pathname = `${wsUrl.pathname}/ws/proctor`.replace(/^\/\//, "/");
+      }
+      wsUrl.search = "";
+      wsUrl.hash = "";
+      websocketUrl = wsUrl.toString();
+    } catch (cause) {
+      const error = new Error(
+        cause.message === "FRAUD_AI_WS_URL must use ws:// or wss://."
+          ? cause.message
+          : "FRAUD_AI_WS_URL must be a valid WebSocket URL.",
+        { cause }
+      );
+      error.code = "PROCTOR_CONFIG_INVALID";
+      throw error;
+    }
+
+    const healthUrl = new URL(websocketUrl);
+    healthUrl.protocol = healthUrl.protocol === "wss:" ? "https:" : "http:";
+    healthUrl.pathname = healthUrl.pathname.replace(/\/ws\/proctor$/i, "/health");
+    return {
+      healthUrl: healthUrl.toString(),
+      websocketUrl,
+      headers: {},
+    };
+  }
+
+  let baseUrl;
+  try {
+    baseUrl = new URL(proctorApiUrl);
+  } catch {
+    const error = new Error("PROCTOR_API_URL must be a valid HTTP(S) base URL.");
+    error.code = "PROCTOR_CONFIG_INVALID";
+    throw error;
+  }
+
+  if (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:") {
+    const error = new Error("PROCTOR_API_URL must use http:// or https://.");
+    error.code = "PROCTOR_CONFIG_INVALID";
+    throw error;
+  }
+
+  baseUrl.pathname = baseUrl.pathname
+    .replace(/\/ws\/proctor\/?$/i, "")
+    .replace(/\/+$/, "") || "/";
+  baseUrl.search = "";
+  baseUrl.hash = "";
+  if (!baseUrl.pathname.endsWith("/")) {
+    baseUrl.pathname += "/";
+  }
+
+  const healthUrl = new URL("health", baseUrl);
+  const websocketUrl = new URL("ws/proctor", baseUrl);
+  websocketUrl.protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
+
+  return {
+    healthUrl: healthUrl.toString(),
+    websocketUrl: websocketUrl.toString(),
+    headers: {
+      Authorization: `Bearer ${proctorApiKey}`,
+    },
+  };
+}
+
+function getProctorDiagnosticContext(urlType = "websocket") {
+  try {
+    const config = getProctorConfig();
+    const targetUrl =
+      urlType === "health" ? config.healthUrl : config.websocketUrl;
+    const urlObject = new URL(targetUrl);
+    urlObject.username = "";
+    urlObject.password = "";
+    const url = urlObject.toString();
+    return {
+      url: proctorApiKey ? url.replaceAll(proctorApiKey, "***") : url,
+      authorization: "Bearer ***",
+    };
+  } catch {
+    if (!proctorApiUrl) {
+      return { url: "[PROCTOR_API_URL not configured]", authorization: "Bearer ***" };
+    }
+
+    try {
+      const baseUrl = new URL(proctorApiUrl);
+      baseUrl.username = "";
+      baseUrl.password = "";
+      baseUrl.pathname = baseUrl.pathname
+        .replace(/\/ws\/proctor\/?$/i, "")
+        .replace(/\/+$/, "") || "/";
+      baseUrl.search = "";
+      baseUrl.hash = "";
+      if (!baseUrl.pathname.endsWith("/")) {
+        baseUrl.pathname += "/";
+      }
+
+      const targetUrl =
+        urlType === "health"
+          ? new URL("health", baseUrl)
+          : new URL("ws/proctor", baseUrl);
+      if (urlType !== "health") {
+        targetUrl.protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
+      }
+      const url = targetUrl.toString();
+      return {
+        url: proctorApiKey ? url.replaceAll(proctorApiKey, "***") : url,
+        authorization: "Bearer ***",
+      };
+    } catch {
+      return { url: "[invalid PROCTOR_API_URL]", authorization: "Bearer ***" };
+    }
+  }
+}
+
+function getProctorErrorDetails(error) {
+  return {
+    code: error.code || error.cause?.code || "UNKNOWN",
+    message: error.message || "Unknown proctoring error",
+    causeCode: error.cause?.code,
+    causeMessage: error.cause?.message,
+    ...getProctorDiagnosticContext(error.proctoringUrlType),
+  };
+}
+
+function connectToFraudAIOnce(config) {
+  return new Promise((resolve, reject) => {
+    const aiSocket = new WebSocket(config.websocketUrl, {
+      headers: proctorApiKey ? config.headers : {},
+    });
+    let settled = false;
+    const controller = new AbortController();
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      controller.signal.removeEventListener("abort", onAbort);
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       aiSocket.terminate();
 
-      const error = new Error(
-        "Fraud AI connection timeout."
-      );
-
+      const error = new Error(`Proctoring AI connection timed out after ${PROCTOR_TIMEOUT_MS}ms.`);
       error.code = "AI_CONNECTION_TIMEOUT";
-
       reject(error);
-    }, 45000);
+    };
+    const timeout = setTimeout(() => controller.abort(), PROCTOR_TIMEOUT_MS);
+    controller.signal.addEventListener("abort", onAbort, { once: true });
 
     aiSocket.once("open", () => {
-      clearTimeout(timeout);
+      if (settled) {
+        aiSocket.close();
+        return;
+      }
+      settled = true;
+      cleanup();
       resolve(aiSocket);
     });
 
     aiSocket.once("error", (error) => {
-      clearTimeout(timeout);
+      if (settled) return;
+      settled = true;
+      cleanup();
 
       const wrappedError = new Error(
-        `Unable to connect to fraud AI: ${error.message}`
+        `Unable to connect to proctoring AI: ${error.message}`,
+        { cause: error }
       );
 
       wrappedError.code =
@@ -179,6 +330,86 @@ function connectToFraudAI() {
       reject(wrappedError);
     });
   });
+}
+
+async function connectToFraudAI() {
+  const config = getProctorConfig();
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await connectToFraudAIOnce(config);
+    } catch (error) {
+      if (error.code !== "AI_CONNECTION_TIMEOUT" || attempt === 2) {
+        throw error;
+      }
+      console.warn("[proctoring] Connection timed out; retrying once.");
+    }
+  }
+
+  throw new Error("Unable to connect to proctoring AI.");
+}
+
+async function checkProctorHealth() {
+  const config = getProctorConfig();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROCTOR_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(config.healthUrl, {
+      method: "GET",
+      headers: {
+        ...(proctorApiKey ? config.headers : {}),
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+
+    if (response.status === 404 || response.status === 405) {
+      await response.body?.cancel();
+      let socket;
+      try {
+        socket = await connectToFraudAI();
+      } catch (error) {
+        error.proctoringUrlType = "websocket";
+        throw error;
+      }
+      socket.close();
+
+      return {
+        status: "ok",
+        check: "websocket",
+      };
+    }
+
+    if (!response.ok) {
+      const error = new Error(
+        `Proctoring AI health check returned HTTP ${response.status}.`
+      );
+      error.code = "AI_HEALTH_HTTP_ERROR";
+      error.proctoringUrlType = "health";
+      throw error;
+    }
+
+    return {
+      status: "ok",
+      check: "http",
+      serviceStatus: response.status,
+    };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(
+        `Proctoring AI health check timed out after ${PROCTOR_TIMEOUT_MS}ms.`,
+        { cause: error }
+      );
+      timeoutError.code = "AI_CONNECTION_TIMEOUT";
+      timeoutError.proctoringUrlType = "health";
+      throw timeoutError;
+    }
+    error.proctoringUrlType = "health";
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function persistProctoringEvent(
@@ -410,6 +641,12 @@ function attachProctoringGateway(server) {
              * Connect MAIN NODE → PYTHON AI
              */
             aiSocket = await connectToFraudAI();
+
+            if (clientSocket.readyState !== WebSocket.OPEN) {
+              aiSocket.close();
+              return;
+            }
+
             authenticated = true;
             activeSessions.set(sessionId, {
               clientSocket,
@@ -768,10 +1005,20 @@ function attachProctoringGateway(server) {
 
             return;
           } catch (error) {
-            console.error(
-              "[proctoring] Start failed:",
-              error
-            );
+            const serviceUnavailable =
+              error.code === "AI_CONNECTION_TIMEOUT" ||
+              error.code === "AI_CONNECTION_FAILED" ||
+              error.code === "PROCTOR_CONFIG_MISSING" ||
+              error.code === "PROCTOR_CONFIG_INVALID";
+            if (serviceUnavailable) {
+              console.error(
+                "[proctoring] Start failed:",
+                getProctorErrorDetails(error)
+              );
+            }
+            const message = serviceUnavailable
+              ? PROCTORING_UNAVAILABLE_MESSAGE
+              : error.message || "Unable to start proctoring.";
 
             sendJson(clientSocket, {
               type:
@@ -781,14 +1028,13 @@ function attachProctoringGateway(server) {
                 error.code ||
                 "PROCTORING_START_FAILED",
 
-              message:
-                error.message ||
-                "Unable to start proctoring.",
+              message,
+              ...(serviceUnavailable ? { error: message } : {}),
             });
 
             clientSocket.close(
-              1008,
-              "Unable to start proctoring"
+              serviceUnavailable ? 1013 : 1008,
+              message
             );
 
             return;
@@ -917,4 +1163,7 @@ function attachProctoringGateway(server) {
 
 module.exports = {
   attachProctoringGateway,
+  checkProctorHealth,
+  getProctorErrorDetails,
+  PROCTORING_UNAVAILABLE_MESSAGE,
 };
