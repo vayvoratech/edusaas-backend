@@ -2,9 +2,14 @@ const repo = require("../data");
 const { assessments } = require("../data/prismaRepo");
 const adaptiveQuizService = require("./adaptiveQuizService");
 const skillGapService = require("./skillGapService");
+const {
+  createAuthorizedInitialRestartSession,
+  isApprovedInitialRestart,
+} = require("./initialAssessmentRestart");
 
 const INITIAL_ASSESSMENT_DURATION_MINUTES = Number(process.env.INITIAL_ASSESSMENT_DURATION_MINUTES || 30)
 const INITIAL_ASSESSMENT_DURATION_MS = INITIAL_ASSESSMENT_DURATION_MINUTES * 60 * 1000;
+const SUPPORTED_ASSESSMENT_TYPES = new Set(["INITIAL", "FINAL", "PRACTICE"]);
 
 const FINAL_ASSESSMENT_DURATION_MINUTES = Number(process.env.FINAL_ASSESSMENT_DURATION_MINUTES || 30)
 const FINAL_ASSESSMENT_DURATION_MS = FINAL_ASSESSMENT_DURATION_MINUTES * 60 * 1000
@@ -24,8 +29,231 @@ if (
 // Strip the answer key before anything goes back to the client.
 function toClientQuestion(question) {
   if (!question) return null;
-  const { correct_option, ...rest } = question;
-  return rest;
+  const clientQuestion = { ...question };
+  delete clientQuestion.correct_option;
+  delete clientQuestion.explanation;
+  return clientQuestion;
+}
+
+function createAssessmentError(message, status) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function normalizeAssessmentType(value) {
+  const assessmentType = String(value || "").trim().toUpperCase();
+  if (!SUPPORTED_ASSESSMENT_TYPES.has(assessmentType)) {
+    throw createAssessmentError(
+      "assessment_type must be INITIAL, FINAL, or PRACTICE.",
+      400
+    );
+  }
+  return assessmentType;
+}
+
+async function getQuizQuestions(skillIdValue, assessmentTypeValue) {
+  const skillId = Number(skillIdValue);
+  if (!Number.isInteger(skillId) || skillId <= 0) {
+    throw createAssessmentError("skill_id must be a positive integer.", 400);
+  }
+
+  const assessmentType = normalizeAssessmentType(assessmentTypeValue);
+  if (assessmentType !== "PRACTICE") {
+    throw createAssessmentError(
+      "Bulk question retrieval is only available for PRACTICE quizzes. Use the existing INITIAL or FINAL assessment flow.",
+      400
+    );
+  }
+
+  const skill = await repo.skills.findById(skillId);
+  if (!skill) {
+    throw createAssessmentError("Skill not found.", 404);
+  }
+
+  const questions = await repo.questions.findBySkill(skillId, assessmentType);
+  if (!questions.length) {
+    throw createAssessmentError(
+      `No active ${assessmentType} questions are available for this skill.`,
+      404
+    );
+  }
+
+  return {
+    skill: {
+      skill_id: skill.skill_id,
+      skill_name: skill.skill_name,
+    },
+    assessment_type: assessmentType,
+    questions: questions.map(toClientQuestion),
+  };
+}
+
+async function submitPracticeQuiz(userId, payload) {
+  const assessmentType = normalizeAssessmentType(payload?.assessment_type);
+  if (assessmentType !== "PRACTICE") {
+    throw createAssessmentError(
+      "Standalone attempts are only available for PRACTICE quizzes. Use the existing INITIAL or FINAL assessment flow.",
+      400
+    );
+  }
+
+  const skillId = Number(payload?.skill_id);
+  if (!Number.isInteger(skillId) || skillId <= 0) {
+    throw createAssessmentError("skill_id must be a positive integer.", 400);
+  }
+
+  if (
+    !Array.isArray(payload?.answers) ||
+    payload.answers.length === 0
+  ) {
+    throw createAssessmentError(
+      "answers must contain at least one question_id and answer pair.",
+      400
+    );
+  }
+
+  const skill = await repo.skills.findById(skillId);
+  if (!skill) {
+    throw createAssessmentError("Skill not found.", 404);
+  }
+
+  const user = await repo.users.findById(userId);
+  if (!user) {
+    throw createAssessmentError("User not found.", 404);
+  }
+  if (!user.domain_role_id) {
+    throw createAssessmentError(
+      "Select a domain role before starting a practice quiz.",
+      400
+    );
+  }
+
+  const questions = await repo.questions.findBySkill(skillId, assessmentType);
+  if (!questions.length) {
+    throw createAssessmentError(
+      `No active ${assessmentType} questions are available for this skill.`,
+      404
+    );
+  }
+
+  const questionsById = new Map(
+    questions.map((question) => [question.question_id, question])
+  );
+  const seenQuestionIds = new Set();
+  let obtainedScore = 0;
+  let maximumScore = 0;
+
+  const answerRecords = payload.answers.map((submission, index) => {
+    const questionId = Number(submission?.question_id);
+    const selectedOption = String(submission?.answer || "")
+      .trim()
+      .toUpperCase();
+
+    if (!Number.isInteger(questionId) || questionId <= 0) {
+      throw createAssessmentError(
+        `answers[${index}].question_id must be a positive integer.`,
+        400
+      );
+    }
+    if (seenQuestionIds.has(questionId)) {
+      throw createAssessmentError(
+        `Question ${questionId} was submitted more than once.`,
+        400
+      );
+    }
+    if (!["A", "B", "C", "D"].includes(selectedOption)) {
+      throw createAssessmentError(
+        `answers[${index}].answer must be A, B, C, or D.`,
+        400
+      );
+    }
+
+    const question = questionsById.get(questionId);
+    if (!question) {
+      throw createAssessmentError(
+        `Question ${questionId} does not belong to this skill's active ${assessmentType} question bank.`,
+        400
+      );
+    }
+
+    seenQuestionIds.add(questionId);
+    const marks =
+      Number.isInteger(question.marks) && question.marks > 0
+        ? question.marks
+        : 1;
+    const isCorrect = selectedOption === question.correct_option.trim().toUpperCase();
+    maximumScore += marks;
+    if (isCorrect) obtainedScore += marks;
+
+    return {
+      skill_id: skillId,
+      question_id: questionId,
+      difficulty_id: question.difficulty_id,
+      selected_option: selectedOption,
+      correct_option: question.correct_option,
+      is_correct: isCorrect,
+      marks_awarded: isCorrect ? marks : 0,
+    };
+  });
+
+  const percentage =
+    maximumScore === 0
+      ? 0
+      : Math.round((obtainedScore / maximumScore) * 100 * 100) / 100;
+  let skillLevel = 1;
+  if (percentage >= 90) skillLevel = 5;
+  else if (percentage >= 70) skillLevel = 4;
+  else if (percentage >= 50) skillLevel = 3;
+  else if (percentage >= 25) skillLevel = 2;
+
+  const completedAt = new Date();
+  const savedAttempt = await repo.quizSessions.createPracticeAttempt({
+    session: {
+      user_id: userId,
+      domain_role_id: user.domain_role_id,
+      assessment_type: assessmentType,
+      start_time: completedAt,
+      end_time: completedAt,
+      status: "Completed",
+      total_questions: answerRecords.length,
+      questions_answered: answerRecords.length,
+      current_skill_id: skillId,
+      deadline_at: null,
+      current_question_id: null,
+      remaining_seconds: null,
+      paused_at: null,
+    },
+    answers: answerRecords,
+    skillResult: {
+      skill_id: skillId,
+      obtained_score: obtainedScore,
+      maximum_score: maximumScore,
+      percentage,
+      skill_level: skillLevel,
+    },
+  });
+
+  return {
+    session_id: savedAttempt.session_id,
+    assessment_type: assessmentType,
+    status: "Completed",
+    skill: {
+      skill_id: skill.skill_id,
+      skill_name: skill.skill_name,
+    },
+    questions_answered: answerRecords.length,
+    obtained_score: obtainedScore,
+    maximum_score: maximumScore,
+    percentage,
+    skill_level: skillLevel,
+    answers: answerRecords.map((answer) => ({
+      question_id: answer.question_id,
+      selected_option: answer.selected_option,
+      is_correct: answer.is_correct,
+      marks_awarded: answer.marks_awarded,
+    })),
+  };
 }
 
 // Start the initial adaptive assessment
@@ -47,6 +275,7 @@ async function startInitialAssessment(userId) {
    * ============================================================
    */
   let existingSession = await repo.quizSessions.findLatestByUserAndAssessmentType(userId, "INITIAL");
+   let initialRestartAuthorization = null;
 
   // ------------------------------------------------------------
   // INITIAL QUIZ IS COMPLETED -> CHECK CODING PHASE
@@ -199,29 +428,10 @@ if (
   // Prevent starting a brand-new assessment after full completion
   const profile = await repo.profiles.findByUserId(userId);
 
-if (
-  profile?.initial_assessment_completed === true &&
-  !approvedInitialRestart &&
-  !approvedCodingRestart
-) {
-  const error = new Error("Initial assessment already completed");
-  error.status = 409;
-  throw error;
-}
-
   if (!user.domain_role_id) {
-    const allRoles = (await repo.domainRoles.list()) || [];
-    const aiRole = allRoles.find((r) => r.domain_name === "AI Engineer") || allRoles[0];
-    if (aiRole) {
-      await repo.users.update(userId, {
-        domain_role_id: aiRole.domain_role_id || aiRole.id,
-      });
-      user.domain_role_id = aiRole.domain_role_id || aiRole.id;
-    } else {
-      const error = new Error("Student has not selected a domain role");
-      error.status = 400;
-      throw error;
-    }
+    const error = new Error("Student has not selected a domain role");
+    error.status = 400;
+    throw error;
   }
 
   const requiredSkills =
@@ -254,44 +464,77 @@ if (
       throw error;
     }
 
-   if (existingSession.status === "Terminated") {
-  const report =
-    await repo.assessmentReports.findByStudentAndSession(
-      userId,
-      existingSession.session_id,
-      "INITIAL_QUIZ"
-    );
+    if (existingSession.status === "Terminated") {
+      const report =
+        await repo.assessmentReports.findByStudentAndSession(
+          userId,
+          existingSession.session_id,
+          "INITIAL_QUIZ"
+        );
 
-  if (!report || report.status !== "Approved") {
-    const error = new Error(
-      report
-        ? `This assessment cannot be restarted until your report is approved. Current status: ${report.status}.`
-        : "This assessment has been terminated. Please report the issue to Admin before restarting."
-    );
+      if (
+        !isApprovedInitialRestart(
+          report,
+          userId,
+          existingSession.session_id
+        )
+      ) {
+        const error = new Error(
+          report
+            ? `This assessment cannot be restarted until your report is approved. Current status: ${report.status}.`
+            : "This assessment has been terminated. Please report the issue to Admin before restarting."
+        );
 
-    error.status = 409;
-    error.code = "ASSESSMENT_TERMINATED";
+        error.status = 409;
+        error.code = "ASSESSMENT_TERMINATED";
 
-    throw error;
-  }
+        throw error;
+      }
 
-  // Admin approved the Initial Quiz termination report.
-  // Keep the old terminated session as history.
-  // Continue into the normal new-assessment creation flow.
-  approvedInitialRestart = true;
-  existingSession = null;
-}
+      approvedInitialRestart = true;
+      initialRestartAuthorization = {
+        report,
+        sourceSessionId: existingSession.session_id,
+      };
+      existingSession = null;
+    }
 
    if (existingSession && existingSession.status === "Timed Out") {
-      const error = new Error(
-        "This assessment has already expired."
-      );
+      const report =
+        await repo.assessmentReports.findByStudentAndSession(
+          userId,
+          existingSession.session_id,
+          "INITIAL_QUIZ"
+        );
 
-      error.status = 409;
-      error.code = "ASSESSMENT_TIME_EXPIRED";
+      if (isApprovedInitialRestart(report, userId, existingSession.session_id)) {
+        approvedInitialRestart = true;
+        initialRestartAuthorization = {
+          report,
+          sourceSessionId: existingSession.session_id,
+        };
+        existingSession = null;
+      } else {
+        const error = new Error(
+          "This assessment has already expired."
+        );
 
-      throw error;
+        error.status = 409;
+        error.code = "ASSESSMENT_TIME_EXPIRED";
+
+        throw error;
+      }
     }
+  }
+
+  if (
+    profile?.initial_assessment_completed === true &&
+    !approvedInitialRestart &&
+    !approvedCodingRestart
+  ) {
+    const error = new Error("Initial assessment already completed");
+    error.status = 409;
+    throw error;
   }
 
   /*
@@ -476,7 +719,7 @@ if (
        * Recreate the missing adaptive quiz state.
        */
       const recoveryStateResponse =
-        await flaskService.createQuizState({
+        await adaptiveQuizService.createQuizState({
           session_id:
             existingSession.session_id,
 
@@ -528,7 +771,7 @@ if (
        * Ask the adaptive engine for the first question.
        */
       const recoveryQuestionResponse =
-        await flaskService.getNextQuestion({
+        await adaptiveQuizService.getNextQuestion({
           state: recoveryState,
           questions: recoveryQuestions,
         });
@@ -787,36 +1030,45 @@ if (
    * deadline the moment the student actually clicks Start — see the
    * note above CASE 1 for why.
    */
-  const quizSession =
-    await repo.quizSessions.create({
-      user_id: userId,
+  const newSessionData = {
+    user_id: userId,
 
-      domain_role_id:
-        user.domain_role_id,
+    domain_role_id:
+      user.domain_role_id,
 
-      assessment_type: "INITIAL",
+    assessment_type: "INITIAL",
 
-      start_time: startTime,
+    start_time: startTime,
 
-      deadline_at: null,
+    deadline_at: null,
 
-      remaining_seconds:
-        durationSeconds,
+    remaining_seconds:
+      durationSeconds,
 
-      paused_at: startTime,
+    paused_at: startTime,
 
-      status: "Paused",
+    status: "Paused",
 
-      total_questions:
-        totalQuestions,
+    total_questions:
+      totalQuestions,
 
-      questions_answered: 0,
+    questions_answered: 0,
 
-      current_skill_id:
-        firstSkill.skill_id,
+    current_skill_id:
+      firstSkill.skill_id,
 
-      current_question_id: null,
-    });
+    current_question_id: null,
+  };
+
+  const quizSession = initialRestartAuthorization
+    ? await createAuthorizedInitialRestartSession(
+        repo,
+        initialRestartAuthorization.report,
+        initialRestartAuthorization.sourceSessionId,
+        userId,
+        newSessionData
+      )
+    : await repo.quizSessions.create(newSessionData);
 
   /*
    * ----------------------------------------------------------
@@ -1029,18 +1281,9 @@ async function startFinalAssessment(userId) {
   }
 
   if (!user.domain_role_id) {
-    const allRoles = (await repo.domainRoles.list()) || [];
-    const aiRole = allRoles.find((r) => r.domain_name === "AI Engineer") || allRoles[0];
-    if (aiRole) {
-      await repo.users.update(userId, {
-        domain_role_id: aiRole.domain_role_id || aiRole.id,
-      });
-      user.domain_role_id = aiRole.domain_role_id || aiRole.id;
-    } else {
-      const error = new Error("Student has not selected a domain role");
-      error.status = 400;
-      throw error;
-    }
+    const error = new Error("Student has not selected a domain role");
+    error.status = 400;
+    throw error;
   }
 
   const requiredSkills =
@@ -2934,6 +3177,24 @@ async function submitInitialAssessmentAnswer(
       );
     }
 
+    if (quizSession.assessment_type === "INITIAL") {
+      const codingAssessment =
+        await codingAssessmentService.startAssessment({
+          userId,
+          sessionId,
+        });
+
+      return {
+        assessment_completed: true,
+        skill_completed: true,
+        phase: "coding",
+        assessment: assessmentMeta,
+        readiness_score: quizReadinessScore,
+        completed_skill: score,
+        coding_assessment: codingAssessment,
+      };
+    }
+
     return {
       assessment_completed: true,
       skill_completed: true,
@@ -3188,6 +3449,8 @@ initialQuizStatus: initialSession?.status || "Not Started",
 }
 
 module.exports = {
+  getQuizQuestions,
+  submitPracticeQuiz,
   startInitialAssessment,
   startFinalAssessment,
 
@@ -3207,4 +3470,3 @@ module.exports = {
 
 
 };
-

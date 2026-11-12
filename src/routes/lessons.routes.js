@@ -68,20 +68,14 @@ router.get("/:id/lessons", authRequired, async (req, res, next) => {
 
     const lessons = await repo.lessons.listByCourse(req.params.id);
     
-    // Security: Do not expose the correct_option to students
-    if (req.user.role === "student") {
-      lessons.forEach(lesson => {
-        if (lesson.quizzes && lesson.quizzes.length > 0) {
-          lesson.quizzes.forEach(quiz => {
-            if (quiz.questions && Array.isArray(quiz.questions)) {
-              quiz.questions.forEach(q => {
-                delete q.correct_option;
-              });
-            }
-          });
-        }
+    lessons.forEach((lesson) => {
+      lesson.quizzes?.forEach((quiz) => {
+        quiz.questions?.forEach((question) => {
+          delete question.correct_option;
+          delete question.explanation;
+        });
       });
-    }
+    });
 
     return res.json(lessons);
   } catch (err) { next(err); }
@@ -160,12 +154,10 @@ router.get("/lesson/:id", authRequired, async (req, res, next) => {
       repo.assignments.listByLesson(lesson.id),
     ]);
 
-    // Security: Do not expose the correct_option to students
-    if (req.user.role === "student" && quiz && quiz.questions && Array.isArray(quiz.questions)) {
-      quiz.questions.forEach(q => {
-        delete q.correct_option;
-      });
-    }
+    quiz?.questions?.forEach((question) => {
+      delete question.correct_option;
+      delete question.explanation;
+    });
 
     return res.json({ ...lesson, quiz, assignments });
   } catch (err) { next(err); }

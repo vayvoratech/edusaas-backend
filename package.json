@@ -18,7 +18,18 @@
     "db:seed:stage": "dotenv -e .env.stage -- prisma db seed",
     "db:studio:stage": "dotenv -e .env.stage -- prisma db studio",
     "db:push:stage": "dotenv -e .env.stage -- prisma db push",
-    "db:seed": "node prisma/seed.js"
+    "db:seed": "node prisma/seed.js",
+    "db:seed:domain-required-skills": "node prisma/seed-domain-required-skills.js",
+    "db:seed:domain-required-skills:stage": "dotenv -e .env.stage -- node prisma/seed-domain-required-skills.js",
+    "db:seed:initial-questions": "node prisma/seed-initial-assessment-questions.js",
+    "db:seed:initial-questions:apply": "node prisma/seed-initial-assessment-questions.js --apply",
+    "db:seed:initial-questions:stage": "cross-env APP_ENV=stage node prisma/seed-initial-assessment-questions.js",
+    "db:seed:initial-questions:stage:apply": "cross-env APP_ENV=stage node prisma/seed-initial-assessment-questions.js --apply",
+    "db:seed:ai-engineer-questions": "node prisma/seed-ai-engineer-questions.js",
+    "db:seed:ai-engineer-questions:stage": "cross-env APP_ENV=stage node prisma/seed-ai-engineer-questions.js",
+    "db:seed:python-initial-questions": "node prisma/seed-python-initial-questions.js",
+    "db:seed:coding-questions": "node prisma/seed-coding-questions.js",
+    "db:seed:python-initial-questions:stage": "cross-env APP_ENV=stage node prisma/seed-python-initial-questions.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
