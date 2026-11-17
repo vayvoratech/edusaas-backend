@@ -1321,37 +1321,55 @@ async function startFinalAssessment(userId) {
   if (existingSession) {
     const now = new Date();
 
+    if (existingSession.status === "Completed") {
+      const error = new Error(
+        "This assessment has already been completed."
+      );
+      error.status = 409;
+      error.code = "ASSESSMENT_ALREADY_COMPLETED";
+      throw error;
+    }
+
+    if (existingSession.status === "Timed Out") {
+      const error = new Error(
+        "The assessment time has expired."
+      );
+      error.status = 409;
+      error.code = "ASSESSMENT_TIME_EXPIRED";
+      throw error;
+    }
+
     if (existingSession.status === "Terminated") {
-  const report =
-    await repo.assessmentReports.findByStudentAndSession(
-      userId,
-      existingSession.session_id,
-      "FINAL_QUIZ"
-    );
+      const report =
+        await repo.assessmentReports.findByStudentAndSession(
+          userId,
+          existingSession.session_id,
+          "FINAL_QUIZ"
+        );
 
-  // Student cannot restart until Admin approves
-  if (!report || report.status !== "Approved") {
-    const error = new Error(
-      report
-        ? `This assessment cannot be restarted until your report is approved. Current status: ${report.status}.`
-        : "This assessment has been terminated. Please report the issue to Admin before restarting."
-    );
+      // Student cannot restart until Admin approves
+      if (!report || report.status !== "Approved") {
+        const error = new Error(
+          report
+            ? `This assessment cannot be restarted until your report is approved. Current status: ${report.status}.`
+            : "This assessment has been terminated. Please report the issue to Admin before restarting."
+        );
 
-    error.status = 409;
-    error.code = "ASSESSMENT_TERMINATED";
+        error.status = 409;
+        error.code = "ASSESSMENT_TERMINATED";
 
-    throw error;
-  }
+        throw error;
+      }
 
-  /*
-   * Admin approved the report.
-   *
-   * Keep the old Terminated session as history.
-   * Setting this to null makes the function continue
-   * into the existing CREATE NEW FINAL ASSESSMENT flow.
-   */
-  existingSession = null;
-}
+      /*
+       * Admin approved the report.
+       *
+       * Keep the old Terminated session as history.
+       * Setting this to null makes the function continue
+       * into the existing CREATE NEW FINAL ASSESSMENT flow.
+       */
+      existingSession = null;
+    } else {
 
     /*
      * ----------------------------------------------------------
@@ -1639,6 +1657,7 @@ async function startFinalAssessment(userId) {
           currentQuestion
         ),
     };
+    }
   }
 
   /*
@@ -3322,7 +3341,7 @@ async function submitFinalAssessmentAnswer(
 }
 
 async function getAssessmentOverview(userId) {
-  const [initialSession, finalSession, gapReport] = await Promise.all([
+  const [initialSession, finalSession, gapReport, user] = await Promise.all([
     repo.quizSessions.findLatestByUserAndAssessmentType(
       userId,
       "INITIAL"
@@ -3334,7 +3353,21 @@ async function getAssessmentOverview(userId) {
     ),
 
     repo.gapReports.findByUserId(userId),
+    repo.users.findById(userId),
   ]);
+
+  const miniProject = user?.domain_role_id
+    ? await repo.miniProjects.getCurrentForStudent(
+        userId,
+        user.domain_role_id
+      )
+    : null;
+
+  const miniProjectStatus = !miniProject
+    ? "Not Available"
+    : miniProject.submissions?.length
+      ? "Submitted"
+      : "Available";
 
   //Get termination report
     const getTerminationEvent = async (sessionId) => {
@@ -3442,7 +3475,7 @@ initialQuizStatus: initialSession?.status || "Not Started",
       },
 
       miniProject: {
-        status: "Not Available",
+        status: miniProjectStatus,
       },
     },
   };

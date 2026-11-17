@@ -18,9 +18,21 @@ function errorHandler(err, req, res, next) {
     status = 400;
   }
 
-  res.status(status).json({
+  const response = {
     error: err.message || "Internal server error",
-  });
+  };
+
+  if (
+    [
+      "ASSESSMENT_TIME_EXPIRED",
+      "ASSESSMENT_TERMINATED",
+      "ASSESSMENT_ALREADY_COMPLETED",
+    ].includes(err.code)
+  ) {
+    response.code = err.code;
+  }
+
+  res.status(status).json(response);
 }
 
 module.exports = { notFound, errorHandler };
